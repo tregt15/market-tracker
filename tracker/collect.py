@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tracker import roblox  # noqa: E402
@@ -177,6 +178,8 @@ def collect_charts(games, t):
     log(f"charts: {len(young_ids)} were created in the last {MAX_AGE_DAYS} days")
     for ch in roblox.chunks(young_ids):
         for d in roblox.games(ch):
+            if d.get("id") not in seen:
+                continue
             for sort_id, rank in seen[d["id"]]:
                 add_game(games, d, "charts", t, (sort_id, rank))
 
@@ -214,6 +217,8 @@ def collect_scan(games, state, t, frontier):
     added = 0
     for ch in roblox.chunks(voted):
         for d in roblox.games(ch):
+            if d.get("id") not in src:  # the API sometimes returns stray entries (id 0)
+                continue
             min_visits, min_playing = bars[src[d["id"]]]
             if young(d.get("created"), t) and (d["visits"] >= min_visits or d["playing"] >= min_playing):
                 add_game(games, d, src[d["id"]], t)
@@ -230,6 +235,8 @@ def snapshot(games, t):
     rows = {}
     for ch in roblox.chunks(active):
         for d in roblox.games(ch):
+            if str(d.get("id")) not in games:
+                continue
             g = games[str(d["id"])]
             g["name"], g["updated"] = d.get("name"), d.get("updated")
             rows[d["id"]] = {"t": iso(t), "id": d["id"], "p": d["playing"], "v": d["visits"], "f": d["favoritedCount"]}
@@ -247,7 +254,7 @@ def snapshot(games, t):
     need = [g["id"] for g in games.values() if g["status"] == "tracking" and not g.get("icon")]
     for ch in roblox.chunks(need):
         for i in roblox.icons(ch):
-            if i.get("imageUrl"):
+            if i.get("imageUrl") and str(i.get("targetId")) in games:
                 games[str(i["targetId"])]["icon"] = i["imageUrl"]
     log(f"snapshot: {len(rows)} games ({len(missing)} gone)")
 
@@ -275,28 +282,48 @@ def main():
     state = load("state.json", {"frontier": DEFAULT_FRONTIER, "passes": {}, "runs": []})
     steps = [a for a in sys.argv[1:]] or ["charts", "scan", "snapshot"]
 
+    failed = []
+
+    # One failing step must not stop the others; the snapshot matters most.
     if "charts" in steps:
-        collect_charts(games, t)
-        save("games.json", games)
+        try:
+            collect_charts(games, t)
+            save("games.json", games)
+        except Exception:
+            traceback.print_exc()
+            failed.append("charts")
     if "scan" in steps:
-        frontier = find_frontier(state["frontier"])
-        state["frontier"] = frontier
-        log(f"newest universe id ~{frontier:,}")
-        collect_scan(games, state, t, frontier)
-        save("games.json", games)
+        passes_before = dict(state["passes"])
+        try:
+            frontier = find_frontier(state["frontier"])
+            state["frontier"] = frontier
+            log(f"newest universe id ~{frontier:,}")
+            collect_scan(games, state, t, frontier)
+            save("games.json", games)
+        except Exception:
+            traceback.print_exc()
+            state["passes"] = passes_before  # rescan the same ids next run
+            failed.append("scan")
         save("state.json", state)
     if "snapshot" in steps:
-        snapshot(games, t)
-        archive(games, t)
-        save("games.json", games)
+        try:
+            snapshot(games, t)
+            archive(games, t)
+            save("games.json", games)
+        except Exception:
+            traceback.print_exc()
+            failed.append("snapshot")
 
     state["runs"] = (state.get("runs", []) + [{
         "t": iso(t), "seconds": round((now_utc() - t).total_seconds()),
         "calls": roblox.stats["calls"], "retries": roblox.stats["retries"],
         "tracking": sum(1 for g in games.values() if g["status"] == "tracking"),
+        "failed": failed,
     }])[-200:]
     save("state.json", state)
     log("run:", state["runs"][-1])
+    if failed:
+        sys.exit(1)  # data is saved; the workflow still publishes, but the run shows red
 
 
 if __name__ == "__main__":
