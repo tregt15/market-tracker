@@ -547,6 +547,10 @@ def main():
     games = load("games.json", {})
     state = load("state.json", {"frontier": DEFAULT_FRONTIER, "passes": {}, "runs": []})
     full = hours_since(state.get("last_full"), t) >= FULL_EVERY_HOURS - 0.5
+    last_run = (state.get("runs") or [{}])[-1].get("t")
+    if not sys.argv[1:] and not full and hours_since(last_run, t) < 0.66:
+        log("run: skipped, the last run was under 40 minutes ago (the workflow has two hourly triggers)")
+        return
     steps = [a for a in sys.argv[1:]] or (["charts", "scan"] if full else []) + ["snapshot", "extras"]
     full = "charts" in steps
     global FULL_RUN
