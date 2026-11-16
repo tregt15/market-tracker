@@ -21,7 +21,18 @@ and snapshots each one every 3 hours for 7 days.
 ## What each snapshot records
 
 Players online, total visits, favorites, likes and dislikes. Genre, sub-genre, age rating,
-creator, server size, chart ranks and icon are stored once per game.
+creator, server size, chart ranks, icon, description and every published update are kept per
+game. Games with 10+ players online (or on a chart) also get their game passes (names and
+prices) and their creator's other public games.
+
+## Outputs
+
+- `index.html`: the dashboard, with a sub-genre table (demand, crowding, hit rate) and a
+  sortable table of every game.
+- `brief.md`: a written summary for reading or for an AI to analyse: demand by age rating,
+  sub-genres, trending title patterns, hits from small creators, fastest risers and the top
+  40 games with descriptions, monetization and creator history.
+- Average session length is estimated as players online / visits per hour (Little's law).
 
 ## Files
 

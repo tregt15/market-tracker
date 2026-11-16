@@ -14,6 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tracker.collect import DATA, ROOT, TRACK_DAYS, load, parse, now_utc  # noqa: E402
+from tracker.brief import write_brief  # noqa: E402
 
 KEEP_DAYS = 14  # games found in the last 2 weeks stay on the dashboard
 SHARDS = 64     # number of time-series files the dashboard loads from on demand
@@ -65,6 +66,15 @@ def metrics(g, rows, t):
         if first and first >= 1:
             trend = recent / first
     up, down = last.get("u") or 0, last.get("d") or 0
+    # Average session length from Little's law: players online = arrivals per hour x hours per visit.
+    session = None
+    gained = last["v"] - rows[0]["v"]
+    if span_h >= 12 and gained >= 50:
+        session = avg([r["p"] for r in rows]) / (gained / span_h) * 60
+        session = round(min(session, 600), 1)
+    passes = g.get("passes")
+    prices = sorted(p["price"] for p in passes or [] if p.get("price"))
+    cg = g.get("creator_games")
     return {
         "id": g["id"], "place": g["place"], "name": g["name"], "creator": g["creator"],
         "genre": g.get("genre") if g.get("genre") not in (None, "", "All") else "No genre set", "sub": g.get("subgenre") or "",
@@ -79,8 +89,21 @@ def metrics(g, rows, t):
         "likePct": round(100 * up / (up + down), 1) if up + down >= 10 else None,
         "votes": up + down,
         "fav1k": round(1000 * last["f"] / last["v"], 1) if last["v"] >= 100 else None,
+        "session": session,
+        "updates": len(g.get("updates") or []),
+        "passes": None if passes is None else len(passes),
+        "passMed": prices[len(prices) // 2] if prices else None,
+        "creatorGames": None if cg is None else cg["count"],
+        "creatorBest": None if cg is None else cg["best_visits"],
+        "verified": g.get("creator_verified"),
         "sp": sparkline([r["p"] for r in rows]),
-        "_series": [[round(h, 1), r["p"], r["v"]] for h, r in pts],
+        # loaded on demand from series/N.json, not part of data.json
+        "_detail": {
+            "s": [[round(h, 1), r["p"], r["v"]] for h, r in pts],
+            "desc": g.get("description") or "",
+            "passes": passes,
+            "creatorBestName": None if cg is None else cg.get("best_name"),
+        },
     }
 
 
@@ -113,9 +136,11 @@ def main():
     os.makedirs(os.path.join(site, "series"))
     shutil.copy(os.path.join(ROOT, "docs", "index.html"), site)
     # full time series go to SHARDS small files, loaded only when a row is opened
+    details = {g["id"]: g.pop("_detail") for g in out}
+    write_brief(out, details, games, site, t)
     shards = {}
-    for g in out:
-        shards.setdefault(g["id"] % SHARDS, {})[g["id"]] = g.pop("_series")
+    for gid, d in details.items():
+        shards.setdefault(gid % SHARDS, {})[gid] = d
     for n, items in shards.items():
         with open(os.path.join(site, "series", f"{n}.json"), "w", encoding="utf-8") as f:
             json.dump(items, f, separators=(",", ":"))

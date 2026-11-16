@@ -124,6 +124,49 @@ def id_at_time(when, frontier):
 
 
 # ---- tracking --------------------------------------------------------------
+def refresh_details(g, d):
+    """Fields that can change while a game is tracked (taken from a games.roblox.com entry)."""
+    creator = d.get("creator") or {}
+    g["name"] = d.get("name") or g["name"]
+    g["creator_id"] = creator.get("id")
+    g["creator_type"] = creator.get("type")
+    g["creator_verified"] = creator.get("hasVerifiedBadge")
+    g["genre"] = d.get("genre_l1") or g.get("genre")
+    g["subgenre"] = d.get("genre_l2") or g.get("subgenre")
+    desc = (d.get("description") or "").strip()
+    g["description"] = desc[:600] + ("…" if len(desc) > 600 else "")
+    upd = d.get("updated")
+    if upd:
+        g["updated"] = upd
+        # every distinct "updated" time seen after the game was found = one published update
+        seen = g.setdefault("updates", [])
+        if upd[:19] > g["first_seen"][:19] and upd[:19] not in seen:
+            seen.append(upd[:19])
+            del seen[:-60]
+
+
+def enrich(games, t, limit=400):
+    """Once per game that has some traction: its game passes and its creator's other games."""
+    todo = [g for g in games.values() if g["status"] == "tracking" and "passes" not in g and g.get("creator_id")]
+    todo.sort(key=lambda g: (-(g.get("peak") or 0)))
+    done = 0
+    for g in todo[:limit]:
+        if (g.get("peak") or 0) < 10 and "charts" not in g["sources"]:
+            continue  # small games: not worth the calls
+        g["passes"] = roblox.game_passes(g["id"])
+        others = [x for x in roblox.creator_games(g["creator_type"], g["creator_id"]) if x.get("id") != g["id"]]
+        visits = sorted((x.get("placeVisits") or 0 for x in others), reverse=True)
+        g["creator_games"] = {
+            "count": len(others),
+            "total_visits": sum(visits),
+            "best_visits": visits[0] if visits else 0,
+            "best_name": max(others, key=lambda x: x.get("placeVisits") or 0)["name"] if others else None,
+        }
+        done += 1
+    if done:
+        log(f"enrich: game passes and creator history for {done} games")
+
+
 def add_game(games, detail, source, t, chart=None):
     gid = str(detail["id"])
     g = games.get(gid)
@@ -145,6 +188,7 @@ def add_game(games, detail, source, t, chart=None):
         }
         g["min_age"], g["maturity"] = roblox.age_rating(detail["id"])
         log(f"  + {g['name']!r} ({source}) created {g['created'][:10]} visits {detail.get('visits')}")
+    refresh_details(g, detail)
     if source not in g["sources"]:
         g["sources"].append(source)
     if chart and g["status"] == "tracking":
@@ -238,7 +282,8 @@ def snapshot(games, t):
             if str(d.get("id")) not in games:
                 continue
             g = games[str(d["id"])]
-            g["name"], g["updated"] = d.get("name"), d.get("updated")
+            refresh_details(g, d)
+            g["peak"] = max(g.get("peak") or 0, d["playing"])
             rows[d["id"]] = {"t": iso(t), "id": d["id"], "p": d["playing"], "v": d["visits"], "f": d["favoritedCount"]}
         for v in roblox.votes(ch):
             if v["id"] in rows:
@@ -313,6 +358,12 @@ def main():
         except Exception:
             traceback.print_exc()
             failed.append("snapshot")
+        try:
+            enrich(games, t)
+            save("games.json", games)
+        except Exception:
+            traceback.print_exc()
+            failed.append("enrich")
 
     state["runs"] = (state.get("runs", []) + [{
         "t": iso(t), "seconds": round((now_utc() - t).total_seconds()),

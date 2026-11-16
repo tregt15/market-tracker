@@ -15,8 +15,8 @@ BATCH = 50  # games.roblox.com returns nothing for more than 50 ids
 # Pause between two requests to the same endpoint. The game details endpoint
 # (/v1/games?universeIds=) is the strict one; its pause adapts: it doubles after a
 # 429 and slowly shrinks back while calls succeed.
-GAPS = {"/v1/games?": 1.0}
-MIN_GAPS = {"/v1/games?": 0.5}
+GAPS = {"/v1/games?": 1.0, "games.roblox.com/v2/": 1.5}  # v2 = creator game lists
+MIN_GAPS = {"/v1/games?": 0.5, "games.roblox.com/v2/": 1.0}
 DEFAULT_GAP = 0.3
 
 _last_call = {}
@@ -92,6 +92,29 @@ def age_rating(universe_id):
         return rec.get("minimumAge"), rec.get("contentMaturity")
     except Exception:
         return None, None
+
+
+def game_passes(universe_id):
+    """[{name, price}] for a game's passes that are for sale (first 100)."""
+    url = f"https://apis.roblox.com/game-passes/v1/universes/{universe_id}/game-passes?passView=Full&pageSize=100"
+    try:
+        d = get_json(url, tries=3)
+    except Exception:
+        return []
+    return [{"name": (p.get("displayName") or p.get("name") or "")[:60], "price": p.get("price")}
+            for p in d.get("gamePasses") or [] if p.get("isForSale")]
+
+
+def creator_games(creator_type, creator_id):
+    """Public games by the same user or group (up to 50): [{id, name, placeVisits, created}]."""
+    if creator_type == "Group":
+        url = f"https://games.roblox.com/v2/groups/{creator_id}/gamesV2?accessFilter=Public&limit=50"
+    else:
+        url = f"https://games.roblox.com/v2/users/{creator_id}/games?accessFilter=Public&limit=50"
+    try:
+        return get_json(url, tries=3).get("data") or []
+    except Exception:
+        return []
 
 
 def votes(universe_ids):

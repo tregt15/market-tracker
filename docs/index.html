@@ -74,7 +74,7 @@ th.sorted.asc::after { content: " \2191"; }
 td.l, th.l { text-align: left; }
 tr.row { cursor: pointer; }
 tr.row:hover td { background: var(--series-soft); }
-.game { display: flex; align-items: center; gap: 10px; max-width: 280px; }
+.game { display: flex; align-items: center; gap: 10px; max-width: 240px; }
 .game img { width: 36px; height: 36px; border-radius: 7px; background: var(--chip); flex: none; }
 .game .nm { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
 .game .cr { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
@@ -111,7 +111,7 @@ a { color: var(--series); }
       <option value="0">All ages only</option>
       <option value="9">Up to 9+</option>
       <option value="13">Up to 13+</option>
-      <option value="17">17+ only</option>
+      <option value="16">16+ and up</option>
     </select></label>
     <label>Found by<select id="src">
       <option value="">Charts or scan</option>
@@ -128,6 +128,14 @@ a { color: var(--series); }
     <h2 id="genreTitle">Visits per day by genre</h2>
     <div class="bars" id="bars"></div>
     <p class="note">Sum of visits per day across the games that match the filters. Click a genre to filter the table.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Sub-genres: demand vs crowding</h2>
+    <div class="tablewrap" style="max-height: 420px; overflow-y: auto;">
+      <table id="subTable" style="min-width: 900px;"></table>
+    </div>
+    <p class="note" id="subNote">Hit rate counts only games found by the new-game scan, so it reflects the odds for a fresh launch. All games tracked, not filtered. <a href="brief.md" target="_blank" rel="noopener">Full written brief</a>.</p>
   </section>
 
   <div class="tablewrap">
@@ -156,15 +164,16 @@ const COLS = [
   { k: "genre", label: "Genre", l: true },
   { k: "minAge", label: "Age" },
   { k: "ageDays", label: "Game age" },
-  { k: "pNow", label: "Players now" },
+  { k: "pNow", label: "Online" },
   { k: "pPeak", label: "Peak" },
-  { k: "vpd24", label: "Visits last 24h" },
+  { k: "vpd24", label: "24h visits" },
   { k: "vpd", label: "Visits/day" },
-  { k: "vNow", label: "Total visits" },
+  { k: "vNow", label: "Total" },
   { k: "trend", label: "Trend" },
   { k: "likePct", label: "Like %" },
   { k: "fav1k", label: "Fav/1k" },
-  { k: "", label: "Players online" },
+  { k: "session", label: "Session" },
+  { k: "", label: "Online trend" },
 ];
 
 function filtered() {
@@ -175,7 +184,7 @@ function filtered() {
     if (genre && g.genre !== genre) return false;
     if (age !== "") {
       const a = g.minAge ?? 0;
-      if (age === "17" ? a < 17 : a > +age) return false;
+      if (age === "16" ? a < 16 : a > +age) return false;
     }
     if (src === "charts" && !g.src.includes("charts")) return false;
     if (src === "scan" && !g.src.some(s => s.startsWith("scan"))) return false;
@@ -290,6 +299,7 @@ function renderTable() {
       trend,
       el("td", null, g.likePct == null ? "–" : g.likePct + "%"),
       el("td", null, g.fav1k == null ? "–" : g.fav1k),
+      el("td", null, g.session == null ? "–" : Math.round(g.session) + "m"),
       spark);
     const toggle = () => { openId = openId === g.id ? null : g.id; renderTable(); };
     tr.addEventListener("click", toggle);
@@ -306,7 +316,7 @@ function detailRow(g) {
   const grid = el("div", "dgrid");
   const facts = el("div", "chartbox"); facts.append(el("h3", null, g.name));
   const dl = el("dl", "facts");
-  const fact = (k, v) => { dl.append(el("dt", null, k)); const dd = el("dd"); if (v instanceof Node) dd.append(v); else dd.textContent = v; dl.append(dd); };
+  const fact = (k, v) => { dl.append(el("dt", null, k)); const dd = el("dd"); if (v instanceof Node) dd.append(v); else dd.textContent = v; dl.append(dd); return dd; };
   const link = el("a", null, "Open on Roblox"); link.href = `https://www.roblox.com/games/${g.place}`; link.target = "_blank"; link.rel = "noopener";
   fact("Link", link);
   fact("Creator", g.creator || "?");
@@ -318,15 +328,23 @@ function detailRow(g) {
   fact("Server size", g.maxPlayers ? g.maxPlayers + " players" : "?");
   fact("Likes", g.votes ? `${g.likePct ?? "–"}% of ${fmt(g.votes)} votes` : "no votes");
   fact("Charts", g.charts.length ? g.charts.map(c => `${c[0]} #${c[1]}`).join(", ") : "not on the charts");
+  fact("Avg session", g.session == null ? "needs 12h of data" : `~${Math.round(g.session)} min`);
+  fact("Updates", `${g.updates} while tracked`);
+  const passFact = fact("Game passes", g.passes == null ? "not checked (small game)" : `${g.passes}` + (g.passMed ? `, median R$${g.passMed}` : ""));
+  fact("Creator's games", g.creatorGames == null ? "not checked" : `${g.creatorGames} others, best ${fmt(g.creatorBest)} visits`);
   facts.append(dl);
+  const desc = el("p", "muted"); desc.style.whiteSpace = "pre-line"; desc.style.fontSize = "12px";
+  facts.append(desc);
   const c1 = el("div", "chartbox"), c2 = el("div", "chartbox");
   c1.append(el("h3", null, "Players online"), el("p", "muted", "Loading…"));
   c2.append(el("h3", null, "Total visits"));
   grid.append(facts, c1, c2);
-  loadSeries(g.id).then(s => {
-    if (!s) { c1.lastChild.textContent = "No chart data."; return; }
-    c1.replaceWith(lineChart(g, s, 1, "Players online"));
-    c2.replaceWith(lineChart(g, s, 2, "Total visits"));
+  loadSeries(g.id).then(d => {
+    if (!d) { c1.lastChild.textContent = "No chart data."; return; }
+    desc.textContent = (d.desc || "").replace(/\n\s*\n+/g, "\n");
+    if (d.passes && d.passes.length) passFact.textContent = d.passes.map(p => `${p.name} R$${p.price}`).join(", ");
+    c1.replaceWith(lineChart(g, d.s, 1, "Players online"));
+    c2.replaceWith(lineChart(g, d.s, 2, "Total visits"));
   });
   td.append(grid); tr.append(td);
   return tr;
@@ -396,6 +414,48 @@ function init(data) {
   renderHead(); render();
   if (location.hash === "#open-first" && rows.length) { openId = rows[0].id; renderTable(); }
 }
+
+const SUB_COLS = [
+  ["subgenre", "Sub-genre", r => r.subgenre, true],
+  ["games", "Games", r => r.games],
+  ["hitRate", "Hit rate", r => r.hitRate == null ? "–" : r.hitRate + "%"],
+  ["hits", "Hits", r => r.hits],
+  ["bigHits", "Big hits", r => r.bigHits],
+  ["visitsPerDay", "Visits/day", r => fmt(r.visitsPerDay)],
+  ["perGame", "Per game", r => fmt(r.perGame)],
+  ["medianSession", "Session", r => r.medianSession == null ? "–" : Math.round(r.medianSession) + "m"],
+  ["medianLike", "Like %", r => r.medianLike == null ? "–" : r.medianLike + "%"],
+  ["allAgesShare", "All ages", r => r.allAgesShare + "%"],
+  ["top", "Top game", r => r.top, true],
+];
+let subRows = [], subKey = "visitsPerDay", subAsc = false;
+function renderSubs() {
+  const t = $("subTable"); t.replaceChildren();
+  const head = el("tr");
+  for (const [k, label, , left] of SUB_COLS) {
+    const th = el("th", (left ? "l " : "") + (k === subKey ? "sorted" + (subAsc ? " asc" : "") : ""), label);
+    th.addEventListener("click", () => { if (subKey === k) subAsc = !subAsc; else { subKey = k; subAsc = left; } renderSubs(); });
+    head.append(th);
+  }
+  const thead = el("thead"); thead.append(head); t.append(thead);
+  const body = el("tbody");
+  const rows = subRows.filter(r => r.games >= 3).sort((a, b) => {
+    const x = a[subKey], y = b[subKey];
+    if (x == null) return 1; if (y == null) return -1;
+    return (subAsc ? 1 : -1) * (typeof x === "string" ? x.localeCompare(y) : x - y);
+  });
+  for (const r of rows) {
+    const tr = el("tr");
+    for (const [, , f, left] of SUB_COLS) tr.append(el("td", left ? "l" : null, f(r)));
+    body.append(tr);
+  }
+  t.append(body);
+}
+fetch("brief.json", { cache: "no-store" }).then(r => r.json()).then(b => {
+  subRows = b.subgenres;
+  $("subNote").firstChild.textContent = `Hit = peak ${b.hit}+ players online, big hit = ${b.bigHit}+. Hit rate counts only games found by the new-game scan, so it reflects the odds for a fresh launch. Per game = visits/day divided by games (high = demand not yet crowded). All tracked games, not filtered. `;
+  renderSubs();
+}).catch(() => {});
 
 fetch("data.json", { cache: "no-store" }).then(r => r.json()).then(init).catch(e => { $("subline").textContent = "Could not load data.json: " + e; });
 </script>
