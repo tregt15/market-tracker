@@ -13,7 +13,7 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from tracker.collect import DATA, ROOT, TRACK_DAYS, load, parse, now_utc  # noqa: E402
+from tracker.collect import DATA, ROOT, TRACK_DAYS, DENSE_DAYS, load, parse, now_utc  # noqa: E402
 from tracker.brief import write_brief  # noqa: E402
 from tracker.export import write_export  # noqa: E402
 
@@ -33,6 +33,11 @@ def series_by_game(since):
                 r = json.loads(line)
                 out.setdefault(r["id"], []).append(r)
     return out
+
+
+def mid_price(items):
+    ps = sorted(p["price"] for p in items or [] if p.get("price"))
+    return ps[len(ps) // 2] if ps else None
 
 
 def avg(xs):
@@ -67,16 +72,21 @@ def metrics(g, rows, t):
         recent = avg([r["p"] for r in window(span_h - 24, span_h)])
         if first and first >= 1:
             trend = recent / first
-    up, down = last.get("u") or 0, last.get("d") or 0
+    voted = [r for r in rows if "u" in r]
+    up, down = (voted[-1]["u"] or 0, voted[-1]["d"] or 0) if voted else (0, 0)
     # Average session length from Little's law: players online = arrivals per hour x hours per visit.
+    # Uses the dense first week only (hourly samples); later snapshots are daily and miss the daily cycle.
     session = None
-    gained = last["v"] - rows[0]["v"]
-    if span_h >= 12 and gained >= 50:
-        session = avg([r["p"] for r in rows]) / (gained / span_h) * 60
+    dense = [r for h, r in pts if h <= DENSE_DAYS * 24]
+    dense_h = (parse(dense[-1]["t"]) - t0).total_seconds() / 3600
+    gained = dense[-1]["v"] - rows[0]["v"]
+    if dense_h >= 12 and gained >= 50:
+        session = avg([r["p"] for r in dense]) / (gained / dense_h) * 60
         session = round(min(session, 600), 1)
     passes = g.get("passes")
-    prices = sorted(p["price"] for p in passes or [] if p.get("price"))
     cg = g.get("creator_games")
+    products = g.get("products")
+    hist = g.get("history") or []
     return {
         "id": g["id"], "place": g["place"], "name": g["name"], "creator": g["creator"],
         "genre": g.get("genre") if g.get("genre") not in (None, "", "All") else "No genre set", "sub": g.get("subgenre") or "",
@@ -94,7 +104,13 @@ def metrics(g, rows, t):
         "session": session,
         "updates": len(g.get("updates") or []),
         "passes": None if passes is None else len(passes),
-        "passMed": prices[len(prices) // 2] if prices else None,
+        "passMed": mid_price(passes),
+        "products": None if products is None else len(products),
+        "productMed": mid_price(products),
+        "groupMembers": g.get("group_members"),
+        "badges": None if "badges" not in g else len(g["badges"]),
+        "nameChanges": sum(h[1] == "name" for h in hist),
+        "iconChanges": sum(h[1] == "icon" for h in hist),
         "creatorGames": None if cg is None else cg["count"],
         "creatorBest": None if cg is None else cg["best_visits"],
         "verified": g.get("creator_verified"),
@@ -104,6 +120,8 @@ def metrics(g, rows, t):
             "s": [[round(h, 1), r["p"], r["v"]] for h, r in pts],
             "desc": g.get("description") or "",
             "passes": passes,
+            "products": products,
+            "history": hist,
             "creatorBestName": None if cg is None else cg.get("best_name"),
         },
     }
@@ -146,7 +164,7 @@ def main():
     shutil.copy(os.path.join(ROOT, "docs", "index.html"), site)
     # the brief and the download cover every game of the last EXPORT_DAYS
     sub, pats = write_brief(every, details, games, site, t)
-    files = write_export(site, every, details, games, series, state, sub, pats, t)
+    files = write_export(site, every, details, games, series, state, sub, pats, t, since)
     # full time series go to SHARDS small files, loaded only when a row is opened
     shards = {}
     for g in out:
@@ -158,7 +176,8 @@ def main():
         "generated": t.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "firstRun": runs[0]["t"] if runs else None,
         "runs": len(runs),
-        "trackDays": TRACK_DAYS,
+        "trackDays": DENSE_DAYS,
+        "trackDaysTotal": TRACK_DAYS,
         "shards": SHARDS,
         "exportFiles": files,
         "exportGames": len(every),

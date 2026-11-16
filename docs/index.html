@@ -425,7 +425,7 @@ function init(data) {
   const genres = [...new Set(data.games.map(g => g.genre))].sort();
   for (const g of genres) { const o = el("option", null, g); o.value = g; $("genre").append(o); }
   const upd = new Date(data.generated);
-  $("subline").textContent = `Games created in the last 30 days, found on the Roblox charts or by scanning new uploads, then snapshotted every 3 hours for ${data.trackDays} days. Updated ${upd.toLocaleString()} · ${data.runs} runs so far.`;
+  $("subline").textContent = `Games created in the last 30 days, found on the Roblox charts or by scanning new uploads, then snapshotted every 1 to 3 hours for ${data.trackDays} days and daily up to ${data.trackDaysTotal || data.trackDays} days. Updated ${upd.toLocaleString()} · ${data.runs} runs so far.`;
   for (const id of ["q", "genre", "age", "src", "maxage", "minp", "week"]) $(id).addEventListener("input", () => { shown = 100; render(); });
   $("reset").addEventListener("click", () => { $("q").value = ""; $("genre").value = ""; $("age").value = ""; $("src").value = ""; $("maxage").value = 30; $("minp").value = 0; $("week").checked = false; shown = 100; render(); });
   $("moreBtn").addEventListener("click", () => { shown += 100; renderTable(); });

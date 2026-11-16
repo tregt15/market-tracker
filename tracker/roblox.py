@@ -15,8 +15,9 @@ BATCH = 50  # games.roblox.com returns nothing for more than 50 ids
 # Pause between two requests to the same endpoint. The game details endpoint
 # (/v1/games?universeIds=) is the strict one; its pause adapts: it doubles after a
 # 429 and slowly shrinks back while calls succeed.
-GAPS = {"/v1/games?": 1.0, "games.roblox.com/v2/": 1.5}  # v2 = creator game lists
-MIN_GAPS = {"/v1/games?": 0.5, "games.roblox.com/v2/": 1.0}
+GAPS = {"/v1/games?": 1.0, "games.roblox.com/v2/": 1.5,  # v2 = creator game lists
+        "/servers/Public": 4.0, "groups.roblox.com": 2.0}  # both allow only a few calls a minute
+MIN_GAPS = {"/v1/games?": 0.5, "games.roblox.com/v2/": 1.0, "/servers/Public": 2.0, "groups.roblox.com": 1.0}
 DEFAULT_GAP = 0.3
 
 _last_call = {}
@@ -115,6 +116,69 @@ def creator_games(creator_type, creator_id):
         return get_json(url, tries=3).get("data") or []
     except Exception:
         return []
+
+
+def developer_products(universe_id, pages=2):
+    """[{name, price}] for a game's developer products (consumables) that are for sale."""
+    out, cursor = [], ""
+    for _ in range(pages):
+        url = f"https://apis.roblox.com/developer-products/v2/universes/{universe_id}/developerproducts?limit=50"
+        if cursor:
+            url += f"&cursor={cursor}"
+        try:
+            d = get_json(url, tries=3)
+        except Exception:
+            return out if out else None
+        out += [{"name": (p.get("displayName") or p.get("Name") or "")[:60], "price": p.get("PriceInRobux")}
+                for p in d.get("developerProducts") or [] if p.get("IsForSale")]
+        cursor = d.get("nextPageCursor")
+        if not cursor:
+            break
+    return out
+
+
+def badges(universe_id, pages=3):
+    """[{id, name, description, created, awarded, pastDay, winRate}] for a game's enabled badges."""
+    out, cursor = [], ""
+    for _ in range(pages):
+        url = f"https://badges.roblox.com/v1/universes/{universe_id}/badges?limit=100&sortOrder=Asc"
+        if cursor:
+            url += f"&cursor={cursor}"
+        d = get_json(url, tries=3)
+        for b in d.get("data") or []:
+            st = b.get("statistics") or {}
+            if b.get("enabled"):
+                out.append({"id": b["id"], "name": (b.get("displayName") or b.get("name") or "")[:80],
+                            "description": (b.get("displayDescription") or b.get("description") or "")[:160],
+                            "created": (b.get("created") or "")[:19], "awarded": st.get("awardedCount"),
+                            "pastDay": st.get("pastDayAwardedCount"), "winRate": st.get("winRatePercentage")})
+        cursor = d.get("nextPageCursor")
+        if not cursor:
+            break
+    return out
+
+
+def servers(place_id):
+    """First page (up to 100) of a place's public servers: [{playing, maxPlayers, fps, ping}], more_pages."""
+    d = get_json(f"https://games.roblox.com/v1/games/{place_id}/servers/Public?limit=100&sortOrder=Desc&excludeFullGames=false",
+                 tries=3)
+    return d.get("data") or [], bool(d.get("nextPageCursor"))
+
+
+def group_members(group_id):
+    return get_json(f"https://groups.roblox.com/v1/groups/{group_id}", tries=3).get("memberCount")
+
+
+def thumbnails(universe_ids):
+    """First thumbnail (screenshot) per game: [{universeId, url}]."""
+    ids = ",".join(str(i) for i in universe_ids)
+    url = f"https://thumbnails.roblox.com/v1/games/multiget/thumbnails?universeIds={ids}&countPerUniverse=1&size=768x432&format=Png&defaults=false"
+    out = []
+    for d in get_json(url).get("data", []):
+        th = [x for x in d.get("thumbnails") or [] if x.get("imageUrl")]
+        if th:
+            out.append({"universeId": d.get("universeId"), "url": th[0]["imageUrl"]})
+    return out
 
 
 def votes(universe_ids):

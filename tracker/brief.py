@@ -159,8 +159,8 @@ def write_brief(games, details, raw_games, site, t):
 
     md = [f"# Market brief, {t.strftime('%Y-%m-%d %H:%M')} UTC", ""]
     md.append(
-        f"{len(games)} Roblox games created in the last 30 days, each snapshotted every 3 hours for up to 7 days after it "
-        f"was found ({len(full)} have a full week). Found on the Roblox charts (pre-selected winners) or by scanning every "
+        f"{len(games)} Roblox games created in the last 30 days, each snapshotted hourly to every 3 hours for 7 days after it "
+        f"was found, then daily up to 30 days ({len(full)} have a full week). Found on the Roblox charts (pre-selected winners) or by scanning every "
         f"new public game (an unbiased sample of launches that got some traction).")
     md.append("")
     md.append(
@@ -172,6 +172,13 @@ def write_brief(games, details, raw_games, site, t):
     md.append(table(sorted(ages.items(), key=lambda x: -x[1][1]), [
         ("Age rating", lambda r: r[0]), ("Games", lambda r: r[1][0]),
         ("Visits/day", lambda r: fmt(r[1][1])), ("Share of visits", lambda r: f"{100 * r[1][1] / total:.0f}%")]))
+    sample = [g for g in games if "sample" in g["src"]]
+    if sample:
+        md += ["## Base rate: random launches below the bar", ""]
+        md.append(f"{len(sample)} randomly picked 2-day-old public games that had not cleared the scan bar. "
+                  f"{sum(g['pPeak'] >= 5 for g in sample)} later reached 5+ players online, "
+                  f"{sum(g['pPeak'] >= HIT for g in sample)} reached {HIT}+. Median visits/day "
+                  f"{fmt(med([demand(g) for g in sample]))}.\n")
     md += ["## Sub-genres (3+ games)", ""]
     md.append(table([r for r in sub if r["games"] >= 3][:40], [
         ("Sub-genre", lambda r: r["subgenre"]), ("Games", lambda r: r["games"]),
