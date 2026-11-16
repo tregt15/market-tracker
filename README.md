@@ -1,7 +1,12 @@
-# Roblox new game tracker
+# Market tracker
 
-Finds Roblox games created in the last 30 days that are getting players, then snapshots
-each one every 3 hours for 7 days, so you can see which new games grow and in which genres.
+Collects public listing stats on a schedule and shows how new entries grow over their
+first week, broken down by category.
+
+## Details
+
+The tracker looks at Roblox games created in the last 30 days that are getting players,
+and snapshots each one every 3 hours for 7 days.
 
 ## How games are found
 

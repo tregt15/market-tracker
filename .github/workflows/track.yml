@@ -1,4 +1,4 @@
-name: Track new games
+name: Update data
 
 on:
   schedule:
