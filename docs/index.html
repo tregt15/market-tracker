@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New Game Tracker</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f6f6f4; --surface: #fcfcfb; --raised: #ffffff;
+  --text: #0b0b0b; --text-2: #52514e; --muted: #7b7a75;
+  --line: #e3e2de; --grid: #ecebe7;
+  --series: #2a78d6; --series-soft: rgba(42,120,214,.14);
+  --good: #0a7d32; --bad: #c2352f;
+  --chip: #efeee9;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #121211; --surface: #1a1a19; --raised: #222220;
+    --text: #f0efec; --text-2: #c3c2b7; --muted: #8f8e86;
+    --line: #2f2f2c; --grid: #282826;
+    --series: #3987e5; --series-soft: rgba(57,135,229,.2);
+    --good: #4cc274; --bad: #ef7470; --chip: #2a2a27;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121211; --surface: #1a1a19; --raised: #222220;
+  --text: #f0efec; --text-2: #c3c2b7; --muted: #8f8e86;
+  --line: #2f2f2c; --grid: #282826;
+  --series: #3987e5; --series-soft: rgba(57,135,229,.2);
+  --good: #4cc274; --bad: #ef7470; --chip: #2a2a27;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -.01em; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+.sub { color: var(--text-2); margin: 0; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 20px 0; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.tile .k { color: var(--text-2); font-size: 12px; }
+.tile .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 16px; }
+.filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
+.filters input[type=search], .filters select, .filters input[type=number] {
+  font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; min-width: 0;
+}
+.filters input[type=search] { width: 220px; max-width: 100%; }
+.filters input[type=number] { width: 90px; }
+.check { flex-direction: row !important; align-items: center; gap: 6px !important; padding-bottom: 7px; }
+button { font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+.note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+/* genre bars */
+.bars { display: grid; grid-template-columns: minmax(110px, 190px) 1fr; gap: 4px 12px; align-items: center; }
+.bars .lab { font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.bars .track { display: flex; align-items: center; gap: 6px; height: 20px; cursor: pointer; min-width: 0; }
+.bars .bar { height: 14px; flex: none; background: var(--series); border-radius: 0 4px 4px 0; min-width: 2px; }
+.bars .track:hover .bar, .bars .track:focus .bar { filter: brightness(1.15); }
+.bars .track.on .bar { outline: 2px solid var(--text); outline-offset: 1px; }
+.bars .val { font-size: 12px; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* table */
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 980px; }
+th, td { padding: 8px 8px; text-align: right; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; white-space: nowrap; }
+th { font-size: 12px; color: var(--text-2); font-weight: 600; position: sticky; top: 0; background: var(--surface); cursor: pointer; user-select: none; }
+th[data-k=""] { cursor: default; }
+th.sorted { color: var(--text); }
+th.sorted::after { content: " \2193"; }
+th.sorted.asc::after { content: " \2191"; }
+td.l, th.l { text-align: left; }
+tr.row { cursor: pointer; }
+tr.row:hover td { background: var(--series-soft); }
+.game { display: flex; align-items: center; gap: 10px; max-width: 280px; }
+.game img { width: 36px; height: 36px; border-radius: 7px; background: var(--chip); flex: none; }
+.game .nm { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.game .cr { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.chip { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--chip); color: var(--text-2); font-size: 12px; }
+.chip.src { margin-left: 4px; }
+.up { color: var(--good); } .down { color: var(--bad); }
+.muted { color: var(--muted); }
+tr.detail td { background: var(--bg); text-align: left; white-space: normal; padding: 16px; }
+.dgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.chartbox { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; position: relative; }
+.chartbox h3 { font-size: 13px; margin: 0 0 6px; }
+.chartbox svg { width: 100%; height: 160px; display: block; overflow: visible; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; }
+.facts dt { color: var(--text-2); } .facts dd { margin: 0; }
+.tip { position: fixed; pointer-events: none; background: var(--raised); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.15); z-index: 10; display: none; }
+.tip b { font-size: 13px; }
+.more { display: flex; justify-content: center; padding: 12px; }
+a { color: var(--series); }
+@media (max-width: 600px) { .bars { grid-template-columns: 100px 1fr; } h1 { font-size: 19px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>New Roblox game tracker</h1>
+  <p class="sub" id="subline">Loading…</p>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="filters" role="group" aria-label="Filters">
+    <label>Search<input type="search" id="q" placeholder="Name or creator"></label>
+    <label>Genre<select id="genre"><option value="">All genres</option></select></label>
+    <label>Age rating<select id="age">
+      <option value="">Any</option>
+      <option value="0">All ages only</option>
+      <option value="9">Up to 9+</option>
+      <option value="13">Up to 13+</option>
+      <option value="17">17+ only</option>
+    </select></label>
+    <label>Found by<select id="src">
+      <option value="">Charts or scan</option>
+      <option value="charts">Roblox charts</option>
+      <option value="scan">New-game scan</option>
+    </select></label>
+    <label>Max age when found (days)<input type="number" id="maxage" min="1" max="30" value="30"></label>
+    <label>Min players now<input type="number" id="minp" min="0" value="0"></label>
+    <label class="check"><input type="checkbox" id="week"> Tracked 7 full days</label>
+    <button id="reset" type="button">Reset</button>
+  </div>
+
+  <section class="panel">
+    <h2 id="genreTitle">Visits per day by genre</h2>
+    <div class="bars" id="bars"></div>
+    <p class="note">Sum of visits per day across the games that match the filters. Click a genre to filter the table.</p>
+  </section>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr id="head"></tr></thead>
+      <tbody id="body"></tbody>
+    </table>
+  </div>
+  <div class="more"><button id="moreBtn" type="button">Show more</button></div>
+  <p class="note">Visits/day uses the visits gained while tracked (games tracked under 12 hours show their lifetime average, marked ~). Trend compares average players online in the last 24 hours with the first 24 hours tracked. Fav/1k is favorites per 1,000 visits, a sign of how much players like a game. Click a row for charts.</p>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => n == null ? "–" : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e4 ? Math.round(n / 1e3) + "k" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n));
+const ageLabel = a => a == null ? "?" : a === 0 ? "All ages" : a + "+";
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const SVG = "http://www.w3.org/2000/svg";
+const svgEl = (tag, attrs) => { const e = document.createElementNS(SVG, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+
+let DATA = null, rows = [], sortKey = "vpd24", sortAsc = false, shown = 100, openId = null;
+
+const COLS = [
+  { k: "name", label: "Game", l: true },
+  { k: "genre", label: "Genre", l: true },
+  { k: "minAge", label: "Age" },
+  { k: "ageDays", label: "Game age" },
+  { k: "pNow", label: "Players now" },
+  { k: "pPeak", label: "Peak" },
+  { k: "vpd24", label: "Visits last 24h" },
+  { k: "vpd", label: "Visits/day" },
+  { k: "vNow", label: "Total visits" },
+  { k: "trend", label: "Trend" },
+  { k: "likePct", label: "Like %" },
+  { k: "fav1k", label: "Fav/1k" },
+  { k: "", label: "Players online" },
+];
+
+function filtered() {
+  const q = $("q").value.trim().toLowerCase(), genre = $("genre").value, age = $("age").value, src = $("src").value;
+  const maxAge = +$("maxage").value || 30, minP = +$("minp").value || 0, week = $("week").checked;
+  return DATA.games.filter(g => {
+    if (q && !(g.name || "").toLowerCase().includes(q) && !(g.creator || "").toLowerCase().includes(q)) return false;
+    if (genre && g.genre !== genre) return false;
+    if (age !== "") {
+      const a = g.minAge ?? 0;
+      if (age === "17" ? a < 17 : a > +age) return false;
+    }
+    if (src === "charts" && !g.src.includes("charts")) return false;
+    if (src === "scan" && !g.src.some(s => s.startsWith("scan"))) return false;
+    if (g.ageDays - g.tracked > maxAge) return false; // age when first found
+    if (g.pNow < minP) return false;
+    if (week && g.tracked < DATA.trackDays - 0.2) return false;
+    return true;
+  });
+}
+
+function sortRows(list) {
+  const k = sortKey, dir = sortAsc ? 1 : -1;
+  return list.sort((a, b) => {
+    let x = a[k], y = b[k];
+    if (k === "vpd24") { x = x ?? a.vpd; y = y ?? b.vpd; }
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    if (typeof x === "string") return dir * x.localeCompare(y);
+    return dir * (x - y);
+  });
+}
+
+function render() {
+  rows = sortRows(filtered());
+  renderTiles();
+  renderBars();
+  renderTable();
+}
+
+function renderTiles() {
+  const t = $("tiles"); t.replaceChildren();
+  const add = (k, v) => { const d = el("div", "tile"); d.append(el("div", "k", k), el("div", "v", v)); t.append(d); };
+  add("Games shown", fmt(rows.length));
+  add("Players online now", fmt(rows.reduce((s, g) => s + g.pNow, 0)));
+  add("Visits per day", fmt(rows.reduce((s, g) => s + (g.vpd24 ?? g.vpd), 0)));
+  const full = rows.filter(g => g.tracked >= DATA.trackDays - 0.2).length;
+  add("Tracked a full week", fmt(full));
+}
+
+function renderBars() {
+  const by = {};
+  for (const g of rows) { const b = by[g.genre] ||= { v: 0, n: 0 }; b.v += g.vpd24 ?? g.vpd; b.n++; }
+  const list = Object.entries(by).sort((a, b) => b[1].v - a[1].v).slice(0, 14);
+  const max = Math.max(1, ...list.map(x => x[1].v));
+  const host = $("bars"); host.replaceChildren();
+  for (const [genre, b] of list) {
+    const lab = el("div", "lab", genre);
+    const track = el("div", "track" + ($("genre").value === genre ? " on" : ""));
+    track.tabIndex = 0;
+    track.setAttribute("role", "button");
+    track.setAttribute("aria-label", `${genre}: ${fmt(b.v)} visits per day across ${b.n} games`);
+    const pct = 100 * b.v / max;
+    const bar = el("div", "bar"); bar.style.width = `calc((100% - 120px) * ${(pct / 100).toFixed(4)})`;
+    const val = el("div", "val", `${fmt(b.v)} · ${b.n} game${b.n === 1 ? "" : "s"}`);
+    track.append(bar, val);
+    const pick = () => { $("genre").value = $("genre").value === genre ? "" : genre; shown = 100; render(); };
+    track.addEventListener("click", pick);
+    track.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    host.append(lab, track);
+  }
+  if (!list.length) host.append(el("div", "lab", "No games match"), el("div"));
+  $("genreTitle").textContent = $("genre").value ? `Visits per day by genre (table filtered to ${$("genre").value})` : "Visits per day by genre";
+}
+
+function renderHead() {
+  const h = $("head"); h.replaceChildren();
+  for (const c of COLS) {
+    const th = el("th", (c.l ? "l " : "") + (c.k === sortKey ? "sorted" + (sortAsc ? " asc" : "") : ""), c.label);
+    th.dataset.k = c.k;
+    if (c.k) th.addEventListener("click", () => {
+      if (sortKey === c.k) sortAsc = !sortAsc; else { sortKey = c.k; sortAsc = c.k === "name" || c.k === "genre" || c.k === "ageDays" || c.k === "minAge"; }
+      renderHead(); render();
+    });
+    h.append(th);
+  }
+}
+
+function sparkline(s) {
+  const w = 80, h = 28, svg = svgEl("svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}`, "aria-hidden": "true" });
+  if (s.length < 2) return svg;
+  const maxX = s[s.length - 1][0] || 1, maxY = Math.max(1, ...s.map(p => p[1]));
+  const d = s.map((p, i) => `${i ? "L" : "M"}${(p[0] / maxX * (w - 4) + 2).toFixed(1)},${(h - 3 - p[1] / maxY * (h - 6)).toFixed(1)}`).join("");
+  svg.append(svgEl("path", { d, fill: "none", stroke: "var(--series)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+  return svg;
+}
+
+function renderTable() {
+  const body = $("body"); body.replaceChildren();
+  for (const g of rows.slice(0, shown)) {
+    const tr = el("tr", "row"); tr.tabIndex = 0;
+    const tdName = el("td", "l");
+    const box = el("div", "game");
+    const img = document.createElement("img"); img.alt = ""; img.loading = "lazy"; if (g.icon) img.src = g.icon;
+    const txt = el("div"); txt.style.minWidth = "0";
+    const nm = el("div", "nm", g.name);
+    const cr = el("div", "cr", g.creator || "");
+    for (const s of g.src) cr.append(el("span", "chip src", s === "charts" ? "charts" : "scan"));
+    txt.append(nm, cr); box.append(img, txt); tdName.append(box);
+    const tdGenre = el("td", "l"); tdGenre.append(el("div", null, g.genre), el("div", "muted", g.sub));
+    const trend = el("td", g.trend == null ? "muted" : g.trend >= 1.1 ? "up" : g.trend <= 0.9 ? "down" : "");
+    trend.textContent = g.trend == null ? "–" : (g.trend >= 1 ? "▲ " : "▼ ") + g.trend.toFixed(2) + "×";
+    const spark = el("td"); spark.append(sparkline(g.s));
+    tr.append(tdName, tdGenre,
+      el("td", null, ageLabel(g.minAge)),
+      el("td", null, Math.round(g.ageDays) + "d"),
+      el("td", null, fmt(g.pNow)),
+      el("td", null, fmt(g.pPeak)),
+      el("td", null, g.vpd24 == null ? "–" : fmt(g.vpd24)),
+      el("td", null, (g.vpdEst ? "~" : "") + fmt(g.vpd)),
+      el("td", null, fmt(g.vNow)),
+      trend,
+      el("td", null, g.likePct == null ? "–" : g.likePct + "%"),
+      el("td", null, g.fav1k == null ? "–" : g.fav1k),
+      spark);
+    const toggle = () => { openId = openId === g.id ? null : g.id; renderTable(); };
+    tr.addEventListener("click", toggle);
+    tr.addEventListener("keydown", e => { if (e.key === "Enter") toggle(); });
+    body.append(tr);
+    if (openId === g.id) body.append(detailRow(g));
+  }
+  $("moreBtn").style.display = rows.length > shown ? "" : "none";
+  $("moreBtn").textContent = `Show more (${rows.length - shown} left)`;
+}
+
+function detailRow(g) {
+  const tr = el("tr", "detail"), td = el("td"); td.colSpan = COLS.length;
+  const grid = el("div", "dgrid");
+  const facts = el("div", "chartbox"); facts.append(el("h3", null, g.name));
+  const dl = el("dl", "facts");
+  const fact = (k, v) => { dl.append(el("dt", null, k)); const dd = el("dd"); if (v instanceof Node) dd.append(v); else dd.textContent = v; dl.append(dd); };
+  const link = el("a", null, "Open on Roblox"); link.href = `https://www.roblox.com/games/${g.place}`; link.target = "_blank"; link.rel = "noopener";
+  fact("Link", link);
+  fact("Creator", g.creator || "?");
+  fact("Genre", g.genre + (g.sub ? " › " + g.sub : ""));
+  fact("Age rating", ageLabel(g.minAge) + (g.mat ? ` (${g.mat})` : ""));
+  fact("Created", g.created);
+  fact("First found", g.first.slice(0, 16).replace("T", " ") + " UTC");
+  fact("Tracked", g.tracked.toFixed(1) + " days" + (g.status === "gone" ? " (now private or deleted)" : ""));
+  fact("Server size", g.maxPlayers ? g.maxPlayers + " players" : "?");
+  fact("Likes", g.votes ? `${g.likePct ?? "–"}% of ${fmt(g.votes)} votes` : "no votes");
+  fact("Charts", g.charts.length ? g.charts.map(c => `${c[0]} #${c[1]}`).join(", ") : "not on the charts");
+  facts.append(dl);
+  grid.append(facts, lineChart(g, 1, "Players online"), lineChart(g, 2, "Total visits"));
+  td.append(grid); tr.append(td);
+  return tr;
+}
+
+function lineChart(g, idx, title) {
+  const box = el("div", "chartbox"); box.append(el("h3", null, title));
+  const W = 320, H = 160, L = 50, R = 8, T = 6, B = 22;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${title} over ${g.tracked.toFixed(1)} days tracked` });
+  const s = g.s, maxX = Math.max(1, s[s.length - 1][0]);
+  const ys = s.map(p => p[idx]); let lo = Math.min(...ys), hi = Math.max(...ys);
+  if (idx === 1) lo = 0;
+  if (hi === lo) hi = lo + 1;
+  const digits = Math.min(6, Math.max(2, Math.ceil(Math.log10(Math.max(1, hi) / Math.max(1, hi - lo))) + 2));
+  const axisFmt = v => new Intl.NumberFormat(undefined, { notation: "compact", maximumSignificantDigits: digits }).format(v);
+  const x = h => L + h / maxX * (W - L - R), y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  for (let i = 0; i <= 3; i++) {
+    const v = lo + (hi - lo) * i / 3, yy = y(v);
+    svg.append(svgEl("line", { x1: L, x2: W - R, y1: yy, y2: yy, stroke: "var(--grid)", "stroke-width": 1 }));
+    const t = svgEl("text", { x: L - 6, y: yy + 4, "text-anchor": "end", "font-size": 10, fill: "var(--muted)" }); t.textContent = axisFmt(v); svg.append(t);
+  }
+  const days = Math.floor(maxX / 24);
+  for (let d = 0; d <= days; d++) {
+    const t = svgEl("text", { x: x(d * 24), y: H - 6, "text-anchor": "middle", "font-size": 10, fill: "var(--muted)" }); t.textContent = "day " + d; svg.append(t);
+  }
+  const d = s.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[idx]).toFixed(1)}`).join("");
+  svg.append(svgEl("path", { d, fill: "none", stroke: "var(--series)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+  const cross = svgEl("line", { y1: T, y2: H - B, stroke: "var(--muted)", "stroke-width": 1, visibility: "hidden" });
+  const dot = svgEl("circle", { r: 4, fill: "var(--series)", stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" });
+  svg.append(cross, dot);
+  const hit = svgEl("rect", { x: L, y: 0, width: W - L - R, height: H, fill: "transparent" });
+  svg.append(hit);
+  const tip = $("tip");
+  hit.addEventListener("pointermove", e => {
+    const r = svg.getBoundingClientRect(), hx = (e.clientX - r.left) / r.width * W;
+    const h = (hx - L) / (W - L - R) * maxX;
+    let best = s[0]; for (const p of s) if (Math.abs(p[0] - h) < Math.abs(best[0] - h)) best = p;
+    cross.setAttribute("x1", x(best[0])); cross.setAttribute("x2", x(best[0])); cross.setAttribute("visibility", "visible");
+    dot.setAttribute("cx", x(best[0])); dot.setAttribute("cy", y(best[idx])); dot.setAttribute("visibility", "visible");
+    const when = new Date(Date.parse(g.first) + best[0] * 3600e3);
+    tip.replaceChildren(el("b", null, best[idx].toLocaleString()), el("div", "muted", `${title} · ${when.toLocaleString([], { month: "short", day: "numeric", hour: "numeric" })}`));
+    tip.style.display = "block";
+    tip.style.left = Math.min(window.innerWidth - 180, e.clientX + 12) + "px";
+    tip.style.top = (e.clientY - 44) + "px";
+  });
+  hit.addEventListener("pointerleave", () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); });
+  box.append(svg);
+  return box;
+}
+
+function init(data) {
+  DATA = data;
+  const genres = [...new Set(data.games.map(g => g.genre))].sort();
+  for (const g of genres) { const o = el("option", null, g); o.value = g; $("genre").append(o); }
+  const upd = new Date(data.generated);
+  $("subline").textContent = `Games created in the last 30 days, found on the Roblox charts or by scanning new uploads, then snapshotted every 3 hours for ${data.trackDays} days. Updated ${upd.toLocaleString()} · ${data.runs} runs so far.`;
+  for (const id of ["q", "genre", "age", "src", "maxage", "minp", "week"]) $(id).addEventListener("input", () => { shown = 100; render(); });
+  $("reset").addEventListener("click", () => { $("q").value = ""; $("genre").value = ""; $("age").value = ""; $("src").value = ""; $("maxage").value = 30; $("minp").value = 0; $("week").checked = false; shown = 100; render(); });
+  $("moreBtn").addEventListener("click", () => { shown += 100; renderTable(); });
+  renderHead(); render();
+  if (location.hash === "#open-first" && rows.length) { openId = rows[0].id; renderTable(); }
+}
+
+fetch("data.json", { cache: "no-store" }).then(r => r.json()).then(init).catch(e => { $("subline").textContent = "Could not load data.json: " + e; });
+</script>
+</body>
+</html>
