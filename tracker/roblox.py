@@ -13,8 +13,10 @@ USER_AGENT = "roblox-market-tracker/1.0"
 BATCH = 50  # games.roblox.com returns nothing for more than 50 ids
 
 # Pause between two requests to the same endpoint. The game details endpoint
-# (/v1/games?universeIds=) allows only ~10 calls a minute; the others are loose.
-GAPS = {"/v1/games?": 5.0}
+# (/v1/games?universeIds=) is the strict one; its pause adapts: it doubles after a
+# 429 and slowly shrinks back while calls succeed.
+GAPS = {"/v1/games?": 1.0}
+MIN_GAPS = {"/v1/games?": 0.5}
 DEFAULT_GAP = 0.3
 
 _last_call = {}
@@ -30,8 +32,8 @@ def _gap_key(url):
 
 def get_json(url, tries=8, body=None):
     key = _gap_key(url)
-    gap = GAPS.get(key, DEFAULT_GAP)
     for attempt in range(tries):
+        gap = GAPS.get(key, DEFAULT_GAP)
         wait = gap - (time.time() - _last_call.get(key, 0))
         if wait > 0:
             time.sleep(wait)
@@ -45,10 +47,15 @@ def get_json(url, tries=8, body=None):
                 headers["Content-Type"] = "application/json"
             req = urllib.request.Request(url, data=data, headers=headers)
             with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                out = json.loads(resp.read().decode("utf-8"))
+            if key in MIN_GAPS:
+                GAPS[key] = max(MIN_GAPS[key], GAPS[key] * 0.97)
+            return out
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 504):
                 stats["retries"] += 1
+                if e.code == 429 and key in MIN_GAPS:
+                    GAPS[key] = min(15.0, GAPS[key] * 2)
                 time.sleep(min(60, 4 * (attempt + 1)))
                 continue
             raise

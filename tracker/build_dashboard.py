@@ -9,12 +9,14 @@ import datetime as dt
 import glob
 import json
 import os
+import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tracker.collect import DATA, ROOT, TRACK_DAYS, load, parse, now_utc  # noqa: E402
 
-KEEP_DAYS = 21  # games found in the last 3 weeks stay on the dashboard
+KEEP_DAYS = 14  # games found in the last 2 weeks stay on the dashboard
+SHARDS = 64     # number of time-series files the dashboard loads from on demand
 
 
 def series_by_game(since):
@@ -77,8 +79,20 @@ def metrics(g, rows, t):
         "likePct": round(100 * up / (up + down), 1) if up + down >= 10 else None,
         "votes": up + down,
         "fav1k": round(1000 * last["f"] / last["v"], 1) if last["v"] >= 100 else None,
-        "s": [[round(h, 1), r["p"], r["v"]] for h, r in pts],
+        "sp": sparkline([r["p"] for r in rows]),
+        "_series": [[round(h, 1), r["p"], r["v"]] for h, r in pts],
     }
+
+
+def sparkline(values, n=16):
+    """Players-online values squeezed to at most n points (bucket averages)."""
+    if len(values) <= n:
+        return values
+    out = []
+    for i in range(n):
+        b = values[i * len(values) // n:(i + 1) * len(values) // n]
+        out.append(round(sum(b) / len(b)))
+    return out
 
 
 def main():
@@ -94,17 +108,29 @@ def main():
             continue
         out.append(metrics(g, rows, t))
     runs = state.get("runs", [])
+    site = os.path.join(ROOT, "site")
+    shutil.rmtree(site, ignore_errors=True)
+    os.makedirs(os.path.join(site, "series"))
+    shutil.copy(os.path.join(ROOT, "docs", "index.html"), site)
+    # full time series go to SHARDS small files, loaded only when a row is opened
+    shards = {}
+    for g in out:
+        shards.setdefault(g["id"] % SHARDS, {})[g["id"]] = g.pop("_series")
+    for n, items in shards.items():
+        with open(os.path.join(site, "series", f"{n}.json"), "w", encoding="utf-8") as f:
+            json.dump(items, f, separators=(",", ":"))
     doc = {
         "generated": t.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "firstRun": runs[0]["t"] if runs else None,
         "runs": len(runs),
         "trackDays": TRACK_DAYS,
+        "shards": SHARDS,
         "games": out,
     }
-    os.makedirs(os.path.join(ROOT, "docs"), exist_ok=True)
-    with open(os.path.join(ROOT, "docs", "data.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(site, "data.json"), "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, separators=(",", ":"))
-    print(f"dashboard data: {len(out)} games")
+    size = os.path.getsize(os.path.join(site, "data.json")) / 1e6
+    print(f"dashboard data: {len(out)} games, data.json {size:.1f} MB")
 
 
 if __name__ == "__main__":

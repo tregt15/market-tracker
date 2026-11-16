@@ -28,13 +28,18 @@ DATA = os.path.join(ROOT, "data")
 MAX_AGE_DAYS = 30          # a game counts as "new" if its universe was created this recently
 TRACK_DAYS = 7             # how long each game is snapshotted after it is first found
 RUN_HOURS = 3              # how often the Action runs (used to size the first scan)
-CHART_VIEWS = [("all", "all"), ("all", "us"), ("phone", "all")]  # (device, country)
-# Each universe id is checked twice: (name, hours after creation, min visits, or min players online).
-# A scanned game is tracked only if it clears one of the two bars at that check.
-SCAN_PASSES = [
-    ("scan-2d", 48, 1_000, 3),
-    ("scan-10d", 240, 5_000, 5),
+# (device, country) views of the Charts page; the lists differ by region and device
+CHART_VIEWS = [("all", "all"), ("phone", "all"), ("computer", "all"), ("console", "all")] + [
+    ("all", c) for c in ("us", "gb", "ca", "au", "br", "mx", "ph", "id", "de", "fr", "es", "tr", "ru", "pl", "th", "vn", "jp", "kr")
 ]
+# Each universe id is checked at several ages: (name, hours after creation, min visits, or min players online).
+# A scanned game is tracked the first time it clears one of the two bars.
+SCAN_PASSES = [
+    ("scan-2d", 48, 300, 2),
+    ("scan-10d", 240, 1_000, 3),
+    ("scan-20d", 480, 2_000, 3),
+]
+ARCHIVE_AFTER_DAYS = 21     # finished games move out of games.json into data/archive/ after this
 MAX_IDS_PER_PASS = 120_000  # cap per run so one run never takes too long (catches up later)
 MAX_BEHIND_IDS = 600_000    # if a cursor falls further behind than this, skip ahead
 MIN_VOTES = 2               # likes+dislikes needed before the slow details call
@@ -247,6 +252,23 @@ def snapshot(games, t):
     log(f"snapshot: {len(rows)} games ({len(missing)} gone)")
 
 
+def archive(games, t):
+    """Move finished games older than ARCHIVE_AFTER_DAYS into data/archive/games-YYYY-MM.json."""
+    old = [k for k, g in games.items()
+           if g["status"] != "tracking" and t - parse(g["first_seen"]) > dt.timedelta(days=ARCHIVE_AFTER_DAYS)]
+    by_month = {}
+    for k in old:
+        by_month.setdefault(games[k]["first_seen"][:7], {})[k] = games.pop(k)
+    os.makedirs(os.path.join(DATA, "archive"), exist_ok=True)
+    for month, items in by_month.items():
+        name = os.path.join("archive", f"games-{month}.json")
+        merged = load(name, {})
+        merged.update(items)
+        save(name, merged)
+    if old:
+        log(f"archived {len(old)} finished games")
+
+
 def main():
     t = now_utc()
     games = load("games.json", {})
@@ -265,6 +287,7 @@ def main():
         save("state.json", state)
     if "snapshot" in steps:
         snapshot(games, t)
+        archive(games, t)
         save("games.json", games)
 
     state["runs"] = (state.get("runs", []) + [{
