@@ -1,4 +1,4 @@
-"""Turn data/ into docs/data.json for the dashboard (docs/index.html).
+"""Build site/: the dashboard (docs/index.html + data.json + series/), brief.md and export/.
 
 Per game it works out players online now / peak / average, visits per day over the
 tracked window and over the last 24 hours, the players-online trend (last 24 h vs the
@@ -15,8 +15,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tracker.collect import DATA, ROOT, TRACK_DAYS, load, parse, now_utc  # noqa: E402
 from tracker.brief import write_brief  # noqa: E402
+from tracker.export import write_export  # noqa: E402
 
-KEEP_DAYS = 14  # games found in the last 2 weeks stay on the dashboard
+KEEP_DAYS = 14    # games found in the last 2 weeks stay on the dashboard
+EXPORT_DAYS = 60  # games found in the last 2 months go into the brief and the download
 SHARDS = 64     # number of time-series files the dashboard loads from on demand
 
 
@@ -121,26 +123,34 @@ def sparkline(values, n=16):
 def main():
     t = now_utc()
     games = load("games.json", {})
+    for path in glob.glob(os.path.join(DATA, "archive", "games-*.json")):  # finished games
+        with open(path, encoding="utf-8") as f:
+            for k, g in json.load(f).items():
+                games.setdefault(k, g)
     state = load("state.json", {"runs": []})
-    since = t - dt.timedelta(days=KEEP_DAYS + TRACK_DAYS)
+    since = t - dt.timedelta(days=EXPORT_DAYS + TRACK_DAYS)
     series = series_by_game(since)
-    out = []
+    every = []
     for g in games.values():
         rows = series.get(g["id"])
-        if not rows or t - parse(g["first_seen"]) > dt.timedelta(days=KEEP_DAYS):
+        if not rows or t - parse(g["first_seen"]) > dt.timedelta(days=EXPORT_DAYS):
             continue
-        out.append(metrics(g, rows, t))
+        every.append(metrics(g, rows, t))
+    details = {g["id"]: g.pop("_detail") for g in every}
+    cutoff = (t - dt.timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    out = [g for g in every if g["first"] >= cutoff]
     runs = state.get("runs", [])
     site = os.path.join(ROOT, "site")
     shutil.rmtree(site, ignore_errors=True)
     os.makedirs(os.path.join(site, "series"))
     shutil.copy(os.path.join(ROOT, "docs", "index.html"), site)
+    # the brief and the download cover every game of the last EXPORT_DAYS
+    sub, pats = write_brief(every, details, games, site, t)
+    files = write_export(site, every, details, games, series, state, sub, pats, t)
     # full time series go to SHARDS small files, loaded only when a row is opened
-    details = {g["id"]: g.pop("_detail") for g in out}
-    write_brief(out, details, games, site, t)
     shards = {}
-    for gid, d in details.items():
-        shards.setdefault(gid % SHARDS, {})[gid] = d
+    for g in out:
+        shards.setdefault(g["id"] % SHARDS, {})[g["id"]] = details[g["id"]]
     for n, items in shards.items():
         with open(os.path.join(site, "series", f"{n}.json"), "w", encoding="utf-8") as f:
             json.dump(items, f, separators=(",", ":"))
@@ -150,6 +160,8 @@ def main():
         "runs": len(runs),
         "trackDays": TRACK_DAYS,
         "shards": SHARDS,
+        "exportFiles": files,
+        "exportGames": len(every),
         "games": out,
     }
     with open(os.path.join(site, "data.json"), "w", encoding="utf-8") as f:

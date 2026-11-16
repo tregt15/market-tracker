@@ -93,6 +93,10 @@ tr.detail td { background: var(--bg); text-align: left; white-space: normal; pad
 .tip b { font-size: 13px; }
 .more { display: flex; justify-content: center; padding: 12px; }
 a { color: var(--series); }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 12px 0 0; }
+a.btn { display: inline-block; text-decoration: none; background: var(--series); color: #fff; border-radius: 7px; padding: 7px 12px; font-weight: 600; }
+a.btn:hover { filter: brightness(1.08); }
+.files { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; margin: 10px 0 0; }
 @media (max-width: 600px) { .bars { grid-template-columns: 100px 1fr; } h1 { font-size: 19px; } }
 </style>
 </head>
@@ -102,6 +106,20 @@ a { color: var(--series); }
   <p class="sub" id="subline">Loading…</p>
 
   <div class="tiles" id="tiles"></div>
+
+  <section class="panel" id="export">
+    <h2>Download for analysis</h2>
+    <p class="sub">One zip with a ready-made analysis prompt, the written brief and every tracked entry as CSV files.
+      Give the files to an AI agent with the prompt, and it has the goals, the data and the output format it needs.</p>
+    <div class="actions">
+      <a class="btn" id="zipLink" href="export/market-research.zip" download>Download zip</a>
+      <button id="copyPrompt" type="button">Copy prompt</button>
+      <a href="export/PROMPT.md" target="_blank" rel="noopener">View prompt</a>
+    </div>
+    <div class="files" id="fileList"></div>
+    <p class="note">Claude Code or another agent that runs code: unzip into a folder and say "Follow PROMPT.md". Chat apps: upload the
+      unzipped files (brief.md and games.csv matter most) and paste the prompt.</p>
+  </section>
 
   <div class="filters" role="group" aria-label="Filters">
     <label>Search<input type="search" id="q" placeholder="Name or creator"></label>
@@ -457,7 +475,29 @@ fetch("brief.json", { cache: "no-store" }).then(r => r.json()).then(b => {
   renderSubs();
 }).catch(() => {});
 
-fetch("data.json", { cache: "no-store" }).then(r => r.json()).then(init).catch(e => { $("subline").textContent = "Could not load data.json: " + e; });
+function setupExport(d) {
+  const f = d.exportFiles || {};
+  const size = b => b >= 1e6 ? (b / 1e6).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1e3)) + " kB";
+  if (f["market-research.zip"]) $("zipLink").textContent = `Download zip (${size(f["market-research.zip"])}, ${(d.exportGames || 0).toLocaleString()} entries)`;
+  const list = $("fileList");
+  for (const [n, b] of Object.entries(f)) {
+    if (n.endsWith(".zip")) continue;
+    const a = el("a", null, n); a.href = "export/" + n; a.target = "_blank"; a.rel = "noopener";
+    const span = el("span", "muted", " " + size(b));
+    const w = el("span"); w.append(a, span); list.append(w);
+  }
+  $("copyPrompt").addEventListener("click", async () => {
+    const b = $("copyPrompt");
+    try {
+      const text = await (await fetch("export/PROMPT.md", { cache: "no-store" })).text();
+      await navigator.clipboard.writeText(text);
+      b.textContent = "Copied";
+    } catch (e) { b.textContent = "Copy failed: open View prompt"; }
+    setTimeout(() => { b.textContent = "Copy prompt"; }, 2500);
+  });
+}
+
+fetch("data.json", { cache: "no-store" }).then(r => r.json()).then(d => { setupExport(d); init(d); }).catch(e => { $("subline").textContent = "Could not load data.json: " + e; });
 </script>
 </body>
 </html>

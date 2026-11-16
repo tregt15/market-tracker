@@ -32,6 +32,10 @@ prices) and their creator's other public games.
 - `brief.md`: a written summary for reading or for an AI to analyse: demand by age rating,
   sub-genres, trending title patterns, hits from small creators, fastest risers and the top
   40 games with descriptions, monetization and creator history.
+- `export/market-research.zip`: a download for handing the data to an AI agent: `PROMPT.md`
+  (goals, constraints, data dictionary, method and deliverables; edit `docs/analysis-prompt.md`),
+  the brief, and `games.csv`, `daily.csv`, `passes.csv`, `subgenres.csv`, `patterns.csv`. The
+  brief and the download cover every game found in the last 60 days, including archived ones.
 - Average session length is estimated as players online / visits per hour (Little's law).
 
 ## Files
@@ -39,9 +43,12 @@ prices) and their creator's other public games.
 | Path | What it is |
 | --- | --- |
 | `tracker/collect.py` | One run: charts, scan, snapshot. Settings are at the top. |
-| `tracker/build_dashboard.py` | Works out the metrics and writes `docs/data.json`. |
+| `tracker/build_dashboard.py` | Works out the metrics and builds `site/` (dashboard data, brief, download). |
+| `tracker/brief.py` | Writes `brief.md` and `brief.json`. |
+| `tracker/export.py` | Writes the CSVs, `PROMPT.md` and the zip in `site/export/`. |
+| `docs/analysis-prompt.md` | The analysis prompt template (`{{COVERAGE}}` is filled in at build time). |
 | `tracker/roblox.py` | Public Roblox web API calls, paced to stay under rate limits. |
-| `docs/index.html` | The dashboard (GitHub Pages serves the `docs` folder). |
+| `docs/index.html` | The dashboard page (copied into `site/`, which GitHub Pages serves). |
 | `data/games.json` | One entry per tracked game. |
 | `data/state.json` | Scan positions and a log of recent runs. |
 | `data/snapshots/*.jsonl` | One line per game per run, one file per day. |
@@ -53,7 +60,7 @@ prices) and their creator's other public games.
 python tracker/collect.py            # charts + scan + snapshot
 python tracker/collect.py snapshot   # snapshot only
 python tracker/build_dashboard.py
-cd docs && python -m http.server     # then open http://localhost:8000
+cd site && python -m http.server     # then open http://localhost:8000
 ```
 
 Only the Python standard library is used.

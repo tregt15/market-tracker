@@ -197,3 +197,4 @@ def write_brief(games, details, raw_games, site, t):
 
     with open(os.path.join(site, "brief.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(md))
+    return sub, pats
