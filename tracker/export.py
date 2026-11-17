@@ -299,7 +299,8 @@ def write_export(site, games, details, raw_games, series, state, sub_rows, pat_r
     with open(os.path.join(out, "PROMPT.md"), "w", encoding="utf-8") as f:
         f.write(prompt)
 
-    order = ["PROMPT.md", "brief.md"] + list(files)
+    shutil.copy(os.path.join(ROOT, "docs", "starter.py"), out)
+    order = ["PROMPT.md", "brief.md", "starter.py"] + list(files)
     with zipfile.ZipFile(os.path.join(out, "market-research.zip"), "w", zipfile.ZIP_DEFLATED) as z:
         for n in order:
             z.write(os.path.join(out, n), n)

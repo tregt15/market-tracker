@@ -71,6 +71,7 @@ How games were found:
 
 | File | What it is |
 | --- | --- |
+| `starter.py` | Optional: `pip install pandas tabulate`, then `python starter.py` prints tag performance, launch curves by tag, age-rating moves, chart-before-growth timing and weakly served search terms. A quick start; check its numbers. |
 | `brief.md` | A written summary: demand by age rating, sub-genres, title patterns, hits from small creators, fastest risers, the top 40 games with description, passes and creator. Start here. |
 | `games.csv` | One row per game with every metric (columns below). Sorted by visits per day. |
 | `daily.csv` | One row per game per UTC day: `game_age_days` (days since the game was created), `players_avg`, `players_max`, `visits_gained` that day and `hours_covered` (how many hours that gain spans; the first day of a game is partial). Use it for launch curves. |
