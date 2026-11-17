@@ -306,6 +306,24 @@ def write_brief(games, details, raw_games, site, t, data_dir):
         ("Game", lambda r: clean(r["name"], 40)), ("Sub-genre", lambda r: r["sub"] or r["genre"]),
         ("Trend", lambda r: f"{r['trend']}x"), ("Players now", lambda r: fmt(r["pNow"])),
         ("Visits/day", lambda r: fmt(demand(r))), ("Age", lambda r: age_label(r["minAge"]))]) if risers else "Needs 2+ days of data.\n")
+    breakouts = [g for g in games if g.get("growth24") and g["growth24"] >= 1.5 and g["pNow"] >= 30]
+    breakouts.sort(key=lambda g: -g["growth24"])
+    md += ["## Breakouts (players online in the last 24 h at least 1.5x the 24 h before, 30+ online now)", ""]
+    md.append(table(breakouts[:25], [
+        ("Game", lambda r: clean(r["name"], 40)), ("Tags", lambda r: ", ".join(r.get("tags") or [])[:40]),
+        ("Game age", lambda r: f"{r['ageDays']:.0f}d"), ("Growth 24h", lambda r: f"{r['growth24']}x"),
+        ("Growth vs week before", lambda r: "–" if r.get("growth7d") is None else f"{r['growth7d']}x"),
+        ("Players now", lambda r: fmt(r["pNow"])), ("Visits/day", lambda r: fmt(demand(r))),
+        ("Age", lambda r: age_label(r["minAge"]))]) if breakouts else "None yet (needs 2+ days of data).\n")
+    late = [g for g in games if g["ageDays"] >= 10 and g.get("growth7d") and g["growth7d"] >= 2 and g["pNow"] >= 30]
+    late.sort(key=lambda g: -g["growth7d"])
+    md += ["## Late bloomers (10+ days old, players at least 2x a week ago)", ""]
+    md.append(table(late[:25], [
+        ("Game", lambda r: clean(r["name"], 40)), ("Tags", lambda r: ", ".join(r.get("tags") or [])[:40]),
+        ("Game age", lambda r: f"{r['ageDays']:.0f}d"), ("Growth vs week before", lambda r: f"{r['growth7d']}x"),
+        ("Players now", lambda r: fmt(r["pNow"])), ("Updates", lambda r: r["updates"]),
+        ("Title/icon changes", lambda r: f"{r.get('nameChanges', 0)}/{r.get('iconChanges', 0)}")]) if late
+              else "None yet (needs 8+ days of tracking).\n")
     md += ["## Top 40 games by visits/day", ""]
     md += [game_block(g, details[g["id"]]) + "\n" for g in top]
 

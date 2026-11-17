@@ -60,6 +60,8 @@ GAME_COLS = [
     ("visits_per_day_is_lifetime_estimate", lambda g, d: int(g["vpdEst"])),
     ("visits_per_day_last_24h", lambda g, d: g["vpd24"]),
     ("trend_last24h_vs_first24h", lambda g, d: g["trend"]),
+    ("growth_last24h_vs_previous24h", lambda g, d: g["growth24"]),
+    ("growth_last24h_vs_week_before", lambda g, d: g["growth7d"]),
     ("like_pct", lambda g, d: g["likePct"]),
     ("votes", lambda g, d: g["votes"]),
     ("favorites_per_1k_visits", lambda g, d: g["fav1k"]),

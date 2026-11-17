@@ -73,6 +73,12 @@ def metrics(g, rows, t):
         recent = avg([r["p"] for r in window(span_h - 24, span_h)])
         if first and first >= 1:
             trend = recent / first
+    # momentum: players online in the last 24 h vs the 24 h before, and vs the same day a week earlier
+    def ratio(lo_a, hi_a, lo_b, hi_b):
+        a, b = avg([r["p"] for r in window(lo_a, hi_a)]), avg([r["p"] for r in window(lo_b, hi_b)])
+        return round(a / b, 2) if a is not None and b and b >= 1 else None
+    growth24 = ratio(span_h - 23.5, span_h, span_h - 47.5, span_h - 23.6) if span_h >= 47 else None
+    growth7d = ratio(span_h - 23.5, span_h, span_h - 191.5, span_h - 168) if span_h >= 190 else None
     voted = [r for r in rows if "u" in r]
     up, down = (voted[-1]["u"] or 0, voted[-1]["d"] or 0) if voted else (0, 0)
     # Average session length from Little's law: players online = arrivals per hour x hours per visit.
@@ -99,6 +105,7 @@ def metrics(g, rows, t):
         "pNow": last["p"], "pPeak": max(r["p"] for r in rows), "pAvg": round(avg([r["p"] for r in rows]), 1),
         "vNow": last["v"], "vpd": round(vpd), "vpdEst": vpd_est,
         "vpd24": None if vpd_24 is None else round(vpd_24), "trend": None if trend is None else round(trend, 2),
+        "growth24": growth24, "growth7d": growth7d,
         "likePct": round(100 * up / (up + down), 1) if up + down >= 10 else None,
         "votes": up + down,
         "fav1k": round(1000 * last["f"] / last["v"], 1) if last["v"] >= 100 else None,
@@ -163,7 +170,8 @@ def main():
         every.append(metrics(g, rows, t))
     details = {g["id"]: g.pop("_detail") for g in every}
     cutoff = (t - dt.timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out = [g for g in every if g["first"] >= cutoff]
+    # the dashboard shows games with some players, or from charts or search; the download has every game
+    out = [g for g in every if g["first"] >= cutoff and (g["pPeak"] >= 5 or "charts" in g["src"] or "search" in g["src"])]
     runs = state.get("runs", [])
     site = os.path.join(ROOT, "site")
     shutil.rmtree(site, ignore_errors=True)

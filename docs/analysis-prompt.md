@@ -99,6 +99,10 @@ How games were found:
 - `created`: when the game was created. `first_seen`: when we first found it.
   `age_when_found_days`: how old it was then. `days_tracked`: how long it has been snapshotted.
 - `charts_best_rank`: `chart:best rank` pairs, for example `top-trending:12;up-and-coming:3`.
+  The `top-earning` chart is Roblox's own ranking by Robux earned, the only revenue signal we
+  have: a young game on it is making real money.
+- `growth_last24h_vs_previous24h`, `growth_last24h_vs_week_before`: players online in the last
+  24 h divided by the 24 h before / the same 24 h a week earlier. Above 1 = growing now.
 - `first_chart_at`: when we first saw the game on any chart.
 - `players_last`, `players_peak`, `players_avg`: players online across snapshots (point samples
   every 1 to 24 hours, so the true peak can be a little higher).
