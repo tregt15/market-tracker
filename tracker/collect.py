@@ -70,7 +70,7 @@ ART_HOURS = 12
 # servers and groups allow only ~4-8 calls a minute, so they cover the biggest games first, daily
 # the extras run in parallel, so a light run spends about max(BUDGET) on them, not the sum
 BUDGET = {"enrich": 420, "badges": 300, "servers": 360, "groups": 300, "art": 120, "ages": 240,
-          "search": 600}  # halved on full runs
+          "search": 900}  # halved on full runs (search runs in light runs only, never halved)
 SEARCH_HOURS = 23           # search demand sweep (autocomplete for every 1-2 letter prefix) once a day
 SEARCH_QUERIES = (100, 60)  # then search results for up to this many new terms / most popular terms
 SEARCH_MIN_PLAYERS = 5      # young games found in search results with this many players get tracked
@@ -586,7 +586,7 @@ def collect_search(games, state, t):
 
     New terms (not seen in earlier sweeps) and the most popular terms get a search, which shows the
     games that rank, whether they are sponsored (ads), and young games we were not tracking yet."""
-    deadline = time.time() + BUDGET["search"] * (0.5 if FULL_RUN else 1)
+    deadline = time.time() + BUDGET["search"]
     letters = "abcdefghijklmnopqrstuvwxyz"
     prefixes = list(letters) + [a + b for a in letters for b in letters]
     known = state.setdefault("terms", {})
@@ -726,7 +726,9 @@ def main():
                 traceback.print_exc()
                 failed.append(name)
         save("games.json", games)
-    if full and not sys.argv[1:] and hours_since(state.get("search_t"), t) >= SEARCH_HOURS or "search" in steps:
+    # the daily search sweep runs in a light hour (full runs are already long), after the extras because
+    # it can add games, which the parallel extras must not see mid-run
+    if (not full and not sys.argv[1:] and hours_since(state.get("search_t"), t) >= SEARCH_HOURS) or "search" in steps:
         step("search", lambda: collect_search(games, state, t))
 
     state["runs"] = (state.get("runs", []) + [{
