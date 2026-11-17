@@ -141,41 +141,52 @@ def parse_day(s):
     return dt.date.fromisoformat(s[:10]).toordinal()
 
 
-def search_lines(games, data_dir, t):
-    """New and popular search terms from the latest daily sweep, with who ranks for them."""
+def search_rows(games, data_dir):
+    """Rows for the latest daily search sweep: term, popularity, top result, young games ranking, served demand."""
     files = sorted(glob.glob(os.path.join(data_dir, "search_results", "*.jsonl")))
-    if not files:
-        return ["No search sweep yet.\n"]
     rows = []
     for path in files[-2:]:
         with open(path, encoding="utf-8") as f:
             rows += [json.loads(x) for x in f if x.strip()]
+    if not rows:
+        return None, []
     last = max(r["t"] for r in rows)
-    rows = [r for r in rows if r["t"] == last]
     young = {g["id"]: g for g in games}
-
-    def describe(r):
+    out = []
+    for r in rows:
+        if r["t"] != last:
+            continue
         res = r["r"]
         top = res[0] if res else None
-        y = [x for x in res[:10] if x[0] in young]
-        spons = sum(x[4] for x in res)
-        return (clean(top[6] if top and len(top) > 6 else "?", 30), fmt(top[1] if top else None), len(y),
-                fmt(sum(x[1] or 0 for x in res[:10])), spons)
+        ys = [young[x[0]] for x in res[:10] if x[0] in young]
+        out.append({
+            "q": r["q"], "new": bool(r.get("new")), "score": r["score"],
+            "top": (top[6] if top and len(top) > 6 else None), "topPlayers": top[1] if top else None,
+            "young": len(ys), "bestYoung": max(ys, key=lambda g: g["pNow"])["name"] if ys else None,
+            "served": sum(x[1] or 0 for x in res[:10]), "sponsored": sum(x[4] for x in res),
+        })
+    out.sort(key=lambda r: (-r["score"], -r["served"]))
+    return last, out
+
+
+def search_lines(last, rows):
+    """New and popular search terms from the latest daily sweep, with who ranks for them."""
+    if not rows:
+        return ["No search sweep yet.\n"]
     out = [f"From the sweep at {last}: Roblox's autocomplete for every 1-2 letter prefix gives the terms players search "
            "for most. Young games in top 10 = results that are games tracked here (created in the last 30 days). "
            "Players in top 10 = demand already served by the top results.", ""]
-    new = sorted([r for r in rows if r.get("new")], key=lambda r: -r["score"])
-    for title, items in (("New terms (not in earlier sweeps)", new[:30]),
-                         ("Most popular terms", sorted(rows, key=lambda r: -r["score"])[:30])):
+    for title, items in (("New terms (not in earlier sweeps)", [r for r in rows if r["new"]][:30]),
+                         ("Most popular terms", rows[:30])):
         out += [f"### {title}", ""]
         if not items:
             out.append("None yet (needs two daily sweeps).\n")
             continue
         out.append(table(items, [
             ("Search term", lambda r: r["q"]), ("Popularity", lambda r: r["score"]),
-            ("Top result", lambda r: describe(r)[0]), ("Its players", lambda r: describe(r)[1]),
-            ("Young games in top 10", lambda r: describe(r)[2]), ("Players in top 10", lambda r: describe(r)[3]),
-            ("Sponsored results", lambda r: describe(r)[4])]))
+            ("Top result", lambda r: clean(r["top"] or "?", 30)), ("Its players", lambda r: fmt(r["topPlayers"])),
+            ("Young games in top 10", lambda r: r["young"]), ("Best young game", lambda r: clean(r["bestYoung"] or "–", 30)),
+            ("Players in top 10", lambda r: fmt(r["served"])), ("Sponsored results", lambda r: r["sponsored"])]))
     return out
 
 
@@ -234,8 +245,9 @@ def table(rows, cols):
 def write_brief(games, details, raw_games, site, t, data_dir):
     sub = subgenre_rows(games)
     pats = pattern_rows(games)
+    search_last, search = search_rows(games, data_dir)
     with open(os.path.join(site, "brief.json"), "w", encoding="utf-8") as f:
-        json.dump({"subgenres": sub, "patterns": pats, "tags": tag_rows(games), "hit": HIT, "bigHit": BIG_HIT}, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump({"subgenres": sub, "patterns": pats, "tags": tag_rows(games), "search": search[:300], "searchAt": search_last, "hit": HIT, "bigHit": BIG_HIT}, f, ensure_ascii=False, separators=(",", ":"))
 
     full = [g for g in games if g["tracked"] >= 6.8]
     top = sorted(games, key=demand, reverse=True)[:40]
@@ -285,7 +297,7 @@ def write_brief(games, details, raw_games, site, t, data_dir):
         ("Median fav/1k", lambda r: r["medianFav1k"] if r["medianFav1k"] is not None else "–"),
         ("Top game", lambda r: clean(r["top"], 35))]))
     md += ["## Search demand", ""]
-    md += search_lines(games, data_dir, t)
+    md += search_lines(search_last, search)
     md += ["## Sub-genres (3+ games)", ""]
     md.append(table([r for r in sub if r["games"] >= 3][:40], [
         ("Sub-genre", lambda r: r["subgenre"]), ("Games", lambda r: r["games"]),

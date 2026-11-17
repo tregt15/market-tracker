@@ -5,6 +5,7 @@ Every call goes through `get_json`, which paces requests and backs off on 429s.
 """
 
 import json
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -23,7 +24,8 @@ MIN_GAPS = {"/v1/games?": 0.5, "games.roblox.com/v2/": 1.0, "/servers/Public": 2
             "games-autocomplete": 0.25}
 DEFAULT_GAP = 0.3
 
-_last_call = {}
+_last_call = {}  # endpoint key -> time of the latest reserved call slot
+_lock = threading.Lock()  # extras run in parallel threads, one per kind of data
 stats = {"calls": 0, "retries": 0}
 
 
@@ -39,12 +41,13 @@ def _gap_key(url):
 def get_json(url, tries=8, body=None):
     key = _gap_key(url)
     for attempt in range(tries):
-        gap = GAPS.get(key, DEFAULT_GAP)
-        wait = gap - (time.time() - _last_call.get(key, 0))
-        if wait > 0:
-            time.sleep(wait)
-        _last_call[key] = time.time()
-        stats["calls"] += 1
+        with _lock:  # reserve the next free slot for this endpoint
+            now = time.time()
+            slot = max(now, _last_call.get(key, 0) + GAPS.get(key, DEFAULT_GAP))
+            _last_call[key] = slot
+            stats["calls"] += 1
+        if slot > now:
+            time.sleep(slot - now)
         try:
             headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
             data = None
@@ -55,18 +58,21 @@ def get_json(url, tries=8, body=None):
             with urllib.request.urlopen(req, timeout=30) as resp:
                 out = json.loads(resp.read().decode("utf-8"))
             if key in MIN_GAPS:
-                GAPS[key] = max(MIN_GAPS[key], GAPS[key] * 0.97)
+                with _lock:
+                    GAPS[key] = max(MIN_GAPS[key], GAPS[key] * 0.97)
             return out
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 504):
-                stats["retries"] += 1
-                if e.code == 429 and key in MIN_GAPS:
-                    GAPS[key] = min(15.0, GAPS[key] * 2)
+                with _lock:
+                    stats["retries"] += 1
+                    if e.code == 429 and key in MIN_GAPS:
+                        GAPS[key] = min(15.0, GAPS[key] * 2)
                 time.sleep(min(60, 4 * (attempt + 1)))
                 continue
             raise
         except (urllib.error.URLError, TimeoutError, ConnectionError):
-            stats["retries"] += 1
+            with _lock:
+                stats["retries"] += 1
             time.sleep(min(60, 4 * (attempt + 1)))
     raise RuntimeError(f"gave up after {tries} tries: {url[:120]}")
 
@@ -107,7 +113,8 @@ def game_passes(universe_id):
         d = get_json(url, tries=3)
     except Exception:
         return []
-    return [{"name": (p.get("displayName") or p.get("name") or "")[:60], "price": p.get("price")}
+    return [{"name": (p.get("displayName") or p.get("name") or "")[:60], "price": p.get("price"),
+             "created": (p.get("created") or "")[:10]}
             for p in d.get("gamePasses") or [] if p.get("isForSale")]
 
 
@@ -134,7 +141,8 @@ def developer_products(universe_id, pages=2):
             d = get_json(url, tries=3)
         except Exception:
             return out if out else None
-        out += [{"name": (p.get("displayName") or p.get("Name") or "")[:60], "price": p.get("PriceInRobux")}
+        out += [{"name": (p.get("displayName") or p.get("Name") or "")[:60], "price": p.get("PriceInRobux"),
+                 "created": (p.get("Created") or "")[:10]}
                 for p in d.get("developerProducts") or [] if p.get("IsForSale")]
         cursor = d.get("nextPageCursor")
         if not cursor:
@@ -166,12 +174,12 @@ def badges(universe_id, pages=3):
 def servers(place_id):
     """First page (up to 100) of a place's public servers: [{playing, maxPlayers, fps, ping}], more_pages."""
     d = get_json(f"https://games.roblox.com/v1/games/{place_id}/servers/Public?limit=100&sortOrder=Desc&excludeFullGames=false",
-                 tries=3)
+                 tries=2)
     return d.get("data") or [], bool(d.get("nextPageCursor"))
 
 
 def group_members(group_id):
-    return get_json(f"https://groups.roblox.com/v1/groups/{group_id}", tries=3).get("memberCount")
+    return get_json(f"https://groups.roblox.com/v1/groups/{group_id}", tries=2).get("memberCount")
 
 
 def thumbnails(universe_ids):

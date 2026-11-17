@@ -7,7 +7,8 @@ first week, broken down by category.
 
 The tracker looks at Roblox games created in the last 30 days that are getting players, and
 follows each one for 30 days: hourly in its first week if it has players (every 3 hours if
-not), then daily. The Action runs every hour; charts and the new-game scan run every 3 hours.
+not), then daily. The Action runs every hour (each run starts the next; crons are a backup); charts and the
+new-game scan run every 3 hours.
 
 ## How games are found
 
@@ -19,7 +20,11 @@ not), then daily. The Action runs every hour; charts and the new-game scan run e
    empty private baseplates). Every id is checked at 2, 10 and 20 days old. A public game with
    a real name and 2+ votes is tracked if it clears that age's bar (300 / 1,000 / 2,000 visits,
    or 2 / 3 / 3 players online). Each scan logs how many ids it checked and how many passed.
-3. **Random sample.** About 50 a day of 2-day-old public games that did not clear the bar, for
+3. **Search.** Once a day the tracker reads Roblox's search autocomplete for every 1-2 letter
+   prefix (the most searched terms), then searches new and popular terms. Young games with 5+
+   players in those results are tracked, and the results themselves are logged (rank, players,
+   sponsored).
+4. **Random sample.** About 50 a day of 2-day-old public games that did not clear the bar, for
    the base rate of an ordinary launch.
 
 ## What is recorded
@@ -32,7 +37,11 @@ not), then daily. The Action runs every hour; charts and the new-game scan run e
 - Every 6 hours in week 1, then daily: badge award counts (games with 5+ players). Daily,
   biggest games first: public server fill (games with 10+ players online) and creator group
   member counts (both endpoints allow only a few calls a minute).
-- These extras run inside a time budget each run, oldest first, so a backlog catches up over
+- Daily: age rating (to see games move off 16+). Once: the creator's account or group age and
+  the media on the game page. Charts and search results also log which games are sponsored.
+- Derived when the dashboard is built: mechanic/theme tags from names and descriptions
+  (`tracker/tags.py`), growth over 24 hours and a week, and a returning-visit share from badges.
+- These extras run in parallel, each inside a time budget each run, oldest first, so a backlog catches up over
   later runs.
 
 ## Outputs
@@ -56,6 +65,7 @@ not), then daily. The Action runs every hour; charts and the new-game scan run e
 | `tracker/collect.py` | One run: charts, scan, snapshot. Settings are at the top. |
 | `tracker/build_dashboard.py` | Works out the metrics and builds `site/` (dashboard data, brief, download). |
 | `tracker/brief.py` | Writes `brief.md` and `brief.json`. |
+| `tracker/tags.py` | Keyword tags (mechanic and theme) from names and descriptions. |
 | `tracker/export.py` | Writes the CSVs, `PROMPT.md` and the zip in `site/export/`. |
 | `docs/analysis-prompt.md` | The analysis prompt template (`{{COVERAGE}}` is filled in at build time). |
 | `tracker/roblox.py` | Public Roblox web API calls, paced to stay under rate limits. |
@@ -64,6 +74,7 @@ not), then daily. The Action runs every hour; charts and the new-game scan run e
 | `data/state.json` | Scan positions and a log of recent runs. |
 | `data/snapshots/*.jsonl` | One line per game per snapshot, one file per day. |
 | `data/charts`, `badges`, `servers`, `groups` | The same, for chart positions, badge counts, server fill and group members. |
+| `data/search`, `search_results` | Daily search-term sweep and the search results for chosen terms. |
 | `data/scan_log.jsonl` | Per scan: ids checked, public games, games that cleared the bar, sampled. |
 | `data/archive/` | Games that finished their 30 days, by month. |
 | `.github/workflows/track.yml` | Runs everything every 3 hours and commits the data. |

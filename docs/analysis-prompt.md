@@ -80,8 +80,8 @@ How games were found:
 | `servers.csv` | First page (up to 100, fullest first) of public servers over time: `fill` (players / capacity), `solo_share` (servers with 0 or 1 player), `full_share`, ping and fps. If `more_servers_than_listed` is 0 the page covers every server. |
 | `groups.csv` | Member count over time of creator groups (join with `games.csv` `creator_id` where `creator_type` is Group). |
 | `history.csv` | Every change of title, description, icon or thumbnail after we found the game, with the time. |
-| `passes.csv` | Every game pass for sale, with price in Robux. |
-| `products.csv` | Every developer product (consumable purchase) for sale, with price in Robux. |
+| `passes.csv` | Every game pass for sale, with price in Robux and the date it was created (compare with the game's `created` to see when monetization was added). Sales counts are hidden by Roblox. |
+| `products.csv` | Every developer product (consumable purchase) for sale, with price in Robux and creation date. |
 | `monetization.csv` | Pass and product counts and median prices at each weekly check, to see how monetization grows. |
 | `search_terms.csv` | Every popular search term from the daily autocomplete sweep: `popularity_score` (rank in the one-letter list counts most, then the two-letter list; max 120), and when we first and last saw it. Terms first seen after the first sweep are **new searches**: rising demand. |
 | `search_results.csv` | The first ~40 search results for new and popular terms: rank, game, players, likes, `sponsored` (an ad), age rating, and `created_if_tracked` (set when the result is a young game we track). Shows how much of a search's demand goes to old giants versus new games. |

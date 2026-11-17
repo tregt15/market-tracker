@@ -227,9 +227,9 @@ def write_export(site, games, details, raw_games, series, state, sub_rows, pat_r
         if g["pPeak"] >= HIT:
             hourly += [[g["id"], r["t"], r["p"], r["v"], r.get("f"), r.get("u"), r.get("d")] for r in rows]
         for p in d.get("passes") or []:
-            pass_rows.append([g["id"], g["name"], p.get("name"), p.get("price")])
+            pass_rows.append([g["id"], g["name"], p.get("name"), p.get("price"), p.get("created")])
         for p in raw.get("products") or []:
-            prod_rows.append([g["id"], g["name"], p.get("name"), p.get("price")])
+            prod_rows.append([g["id"], g["name"], p.get("name"), p.get("price"), p.get("created")])
         for h in raw.get("history") or []:
             hist_rows.append([g["id"], h[0], h[1], " ".join(str(h[2]).split())])
         for m in raw.get("mon_log") or []:
@@ -277,8 +277,8 @@ def write_export(site, games, details, raw_games, series, state, sub_rows, pat_r
     write("search_results.csv", ["time_utc", "query", "query_is_new", "query_popularity", "rank", "universe_id", "name", "players",
                                  "likes", "dislikes", "sponsored", "min_age", "created_if_tracked"], srows)
     write("history.csv", ["id", "time_utc", "field", "new_value"], hist_rows)
-    write("passes.csv", ["id", "game_name", "pass_name", "price_robux"], pass_rows)
-    write("products.csv", ["id", "game_name", "product_name", "price_robux"], prod_rows)
+    write("passes.csv", ["id", "game_name", "pass_name", "price_robux", "created"], pass_rows)
+    write("products.csv", ["id", "game_name", "product_name", "price_robux", "created"], prod_rows)
     write("monetization.csv", ["id", "time_utc", "passes", "pass_price_median", "products", "product_price_median"], mon_rows)
     scan = []
     path = os.path.join(DATA, "scan_log.jsonl")

@@ -27,6 +27,7 @@ import re
 import sys
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tracker import roblox  # noqa: E402
@@ -67,7 +68,8 @@ GROUP_MIN_PEAK = 5
 MONETIZATION_RECHECK_DAYS = 7
 ART_HOURS = 12
 # servers and groups allow only ~4-8 calls a minute, so they cover the biggest games first, daily
-BUDGET = {"enrich": 300, "badges": 180, "servers": 150, "groups": 90, "art": 60, "ages": 90,
+# the extras run in parallel, so a light run spends about max(BUDGET) on them, not the sum
+BUDGET = {"enrich": 420, "badges": 300, "servers": 360, "groups": 300, "art": 120, "ages": 240,
           "search": 600}  # halved on full runs
 SEARCH_HOURS = 23           # search demand sweep (autocomplete for every 1-2 letter prefix) once a day
 SEARCH_QUERIES = (100, 60)  # then search results for up to this many new terms / most popular terms
@@ -403,16 +405,22 @@ FULL_RUN = False
 
 def run_budgeted(name, todo, fn):
     deadline = time.time() + BUDGET[name] * (0.5 if FULL_RUN else 1)
-    done = 0
+    done = fails = 0
     for item in todo:
         if time.time() > deadline:
             break
         try:
             fn(item)
             done += 1
+            fails = 0
         except Exception as e:
             log(f"  {name}: {e}")
-    log(f"{name}: {done} done" + (f", {len(todo) - done} left for later runs" if done < len(todo) else ""))
+            fails += 1
+            if fails >= 3:  # the endpoint is throttling us; leave the rest for a later run
+                log(f"  {name}: 3 failures in a row, stopping for this run")
+                break
+    log(f"{name}: {done} done" + (f", {len(todo) - done} left for later runs" if done < len(todo) else "")
+        + f" ({time.time() - deadline + BUDGET[name] * (0.5 if FULL_RUN else 1):.0f}s)")
 
 
 def _prices(items):
@@ -704,12 +712,20 @@ def main():
         step("snapshot", lambda: snapshot(games, t, full))
         step("archive", lambda: archive(games, t))
     if "extras" in steps:
-        step("enrich", lambda: enrich(games, t))
-        step("badges", lambda: collect_badges(games, t))
-        step("servers", lambda: collect_servers(games, t))
-        step("groups", lambda: collect_groups(games, state, t))
-        step("art", lambda: collect_art(games, t))
-        step("ages", lambda: collect_ages(games, t))
+        # Each extra mostly calls a different Roblox host, so they run side by side; each keeps its own
+        # time budget and the per-endpoint pacing in roblox.py is shared and thread-safe.
+        extras = {"enrich": lambda: enrich(games, t), "badges": lambda: collect_badges(games, t),
+                  "servers": lambda: collect_servers(games, t), "groups": lambda: collect_groups(games, state, t),
+                  "art": lambda: collect_art(games, t), "ages": lambda: collect_ages(games, t)}
+        with ThreadPoolExecutor(max_workers=len(extras)) as pool:
+            futures = {name: pool.submit(fn) for name, fn in extras.items()}
+        for name, fut in futures.items():
+            try:
+                fut.result()
+            except Exception:
+                traceback.print_exc()
+                failed.append(name)
+        save("games.json", games)
     if full and not sys.argv[1:] and hours_since(state.get("search_t"), t) >= SEARCH_HOURS or "search" in steps:
         step("search", lambda: collect_search(games, state, t))
 

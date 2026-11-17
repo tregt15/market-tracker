@@ -163,6 +163,18 @@ a.btn:hover { filter: brightness(1.08); }
     <p class="note" id="subNote">Hit rate counts only games found by the new-game scan, so it reflects the odds for a fresh launch. All games tracked, not filtered. <a href="brief.md" target="_blank" rel="noopener">Full written brief</a>.</p>
   </section>
 
+  <section class="panel">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+      <h2 style="margin:0;">Search demand</h2>
+      <label class="sub" style="font-size:13px;">Show <select id="searchMode">
+        <option value="new">New search terms</option><option value="all">Most searched terms</option></select></label>
+    </div>
+    <div class="tablewrap" style="max-height: 420px; overflow-y: auto;">
+      <table id="searchTable" style="min-width: 860px;"></table>
+    </div>
+    <p class="note" id="searchNote">Terms players search for most (Roblox search suggestions for every one and two letter start), checked daily. New = not seen in earlier days. Young games = results created in the last 30 days that are tracked here. Players in top 10 = demand the current results already serve; a popular term with few young games and weak results is an opening.</p>
+  </section>
+
   <div class="tablewrap">
     <table>
       <thead><tr id="head"></tr></thead>
@@ -496,6 +508,8 @@ fetch("brief.json", { cache: "no-store" }).then(r => r.json()).then(b => {
   $("subMode").addEventListener("change", e => { subMode = e.target.value; subRows = BRIEF[subMode] || []; renderSubs(); });
   $("subNote").firstChild.textContent = `Hit = peak ${b.hit}+ players online, big hit = ${b.bigHit}+. Hit rate counts only games found by the new-game scan, so it reflects the odds for a fresh launch. Per game = visits/day divided by games (high = demand not yet crowded). All tracked games, not filtered. `;
   renderSubs();
+  if (!(b.search || []).some(r => r.new)) $("searchMode").value = "all";
+  renderSearch();
 }).catch(() => {});
 
 function setupExport(d) {
@@ -519,6 +533,47 @@ function setupExport(d) {
     setTimeout(() => { b.textContent = "Copy prompt"; }, 2500);
   });
 }
+
+const SEARCH_COLS = [
+  ["q", "Search term", r => r.q, true],
+  ["score", "Popularity", r => r.score],
+  ["top", "Top result", r => r.top || "?", true],
+  ["topPlayers", "Its players", r => fmt(r.topPlayers)],
+  ["young", "Young games in top 10", r => r.young],
+  ["bestYoung", "Best young game", r => r.bestYoung || "–", true],
+  ["served", "Players in top 10", r => fmt(r.served)],
+];
+let searchKey = "score", searchAsc = false;
+function renderSearch() {
+  const t = $("searchTable"); t.replaceChildren();
+  const all = (BRIEF && BRIEF.search) || [];
+  const mode = $("searchMode").value;
+  let rows = mode === "new" ? all.filter(r => r.new) : all;
+  if (!rows.length) {
+    const tr = el("tr"); const td = el("td", "l", mode === "new" && all.length ? "No new terms yet: new terms show up from the second daily check." : "No search data yet (checked once a day).");
+    tr.append(td); t.append(tr); return;
+  }
+  const head = el("tr");
+  for (const [k, label, , left] of SEARCH_COLS) {
+    const th = el("th", (left ? "l " : "") + (k === searchKey ? "sorted" + (searchAsc ? " asc" : "") : ""), label);
+    th.addEventListener("click", () => { if (searchKey === k) searchAsc = !searchAsc; else { searchKey = k; searchAsc = left; } renderSearch(); });
+    head.append(th);
+  }
+  const thead = el("thead"); thead.append(head); t.append(thead);
+  rows = [...rows].sort((a, b) => {
+    const x = a[searchKey], y = b[searchKey];
+    if (x == null) return 1; if (y == null) return -1;
+    return (searchAsc ? 1 : -1) * (typeof x === "string" ? x.localeCompare(y) : x - y);
+  });
+  const body = el("tbody");
+  for (const r of rows.slice(0, 150)) {
+    const tr = el("tr");
+    for (const [, , f, left] of SEARCH_COLS) tr.append(el("td", left ? "l" : null, String(f(r))));
+    body.append(tr);
+  }
+  t.append(body);
+}
+$("searchMode").addEventListener("change", renderSearch);
 
 fetch("data.json", { cache: "no-store" }).then(r => r.json()).then(d => { setupExport(d); init(d); }).catch(e => { $("subline").textContent = "Could not load data.json: " + e; });
 </script>
