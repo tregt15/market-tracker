@@ -586,11 +586,15 @@ def collect_search(games, state, t):
 
     New terms (not seen in earlier sweeps) and the most popular terms get a search, which shows the
     games that rank, whether they are sponsored (ads), and young games we were not tracking yet."""
-    deadline = time.time() + BUDGET["search"]
+    start = time.time()
+    deadline = start + BUDGET["search"] * 0.65  # the rest of the budget is for the searches
     letters = "abcdefghijklmnopqrstuvwxyz"
-    prefixes = list(letters) + [a + b for a in letters for b in letters]
+    vowels = set("aeiouy")
+    pairs = [a + b for a in letters for b in letters]
+    # common starts first, so a throttled sweep still covers what matters; rare pairs like "zv" last
+    prefixes = list(letters) + [p for p in pairs if vowels & set(p)] + [p for p in pairs if not vowels & set(p)]
     known = state.setdefault("terms", {})
-    baseline = not known
+    baseline = not state.get("search_complete")  # "new" terms need one complete earlier sweep to compare with
     score, rows = {}, []
     for p in prefixes:
         if time.time() > deadline:
@@ -606,13 +610,16 @@ def collect_search(games, state, t):
             # rank in the one-letter list dominates (those are the most searched terms), then the two-letter list
             score[q] = score.get(q, 0) + (10 - min(i, 9)) * (11 if len(p) == 1 else 1)
     append_jsonl("search", t, rows)
-    new = [q for q in score if q not in known]
+    complete = len(rows) >= 0.95 * len(prefixes)
+    new = [] if baseline else [q for q in score if q not in known]
     for q in score:  # [first seen, last seen]
         known[q] = [known[q][0] if q in known else iso(t), iso(t)]
-    log(f"search: {len(score)} popular terms, {0 if baseline else len(new)} new since earlier sweeps")
+    log(f"search: {len(score)} popular terms, {len(new)} new since earlier sweeps"
+        + ("" if complete else " (partial sweep)"))
     queries = ([] if baseline else sorted(new, key=lambda q: -score[q])[:SEARCH_QUERIES[0]])
     queries += [q for q in sorted(score, key=lambda q: -score[q]) if q not in queries][:SEARCH_QUERIES[1]]
     results, found = [], {}
+    deadline = start + BUDGET["search"]
     for q in queries:
         if time.time() > deadline:
             break
@@ -621,7 +628,7 @@ def collect_search(games, state, t):
         except Exception as e:
             log(f"  search {q!r}: {e}")
             continue
-        results.append({"t": iso(t), "q": q, "new": int(q in new and not baseline), "score": score[q],
+        results.append({"t": iso(t), "q": q, "new": int(q in new), "score": score[q],
                         "r": [[x["universeId"], x["playerCount"], x["up"], x["down"], int(x["sponsored"]), x["minAge"],
                                (x["name"] or "")[:60]] for x in res]})
         for x in res:
@@ -646,7 +653,9 @@ def collect_search(games, state, t):
     # forget terms not seen for 60 days so state.json stays small
     for q in [q for q, v in known.items() if hours_since(v[1], t) > 24 * 60]:
         del known[q]
-    state["search_t"] = iso(t)
+    if complete:  # a partial sweep is retried next hour
+        state["search_t"] = iso(t)
+        state["search_complete"] = True
     log(f"search: {len(results)} searches, {added} young games added from search results")
 
 
@@ -728,7 +737,8 @@ def main():
         save("games.json", games)
     # the daily search sweep runs in a light hour (full runs are already long), after the extras because
     # it can add games, which the parallel extras must not see mid-run
-    if (not full and not sys.argv[1:] and hours_since(state.get("search_t"), t) >= SEARCH_HOURS) or "search" in steps:
+    search_due = hours_since(state.get("search_t"), t) >= SEARCH_HOURS or not state.get("search_complete")
+    if (not full and not sys.argv[1:] and search_due) or "search" in steps:
         step("search", lambda: collect_search(games, state, t))
 
     state["runs"] = (state.get("runs", []) + [{
