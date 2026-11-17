@@ -7,6 +7,7 @@ Every call goes through `get_json`, which paces requests and backs off on 429s.
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 USER_AGENT = "roblox-market-tracker/1.0"
@@ -16,8 +17,10 @@ BATCH = 50  # games.roblox.com returns nothing for more than 50 ids
 # (/v1/games?universeIds=) is the strict one; its pause adapts: it doubles after a
 # 429 and slowly shrinks back while calls succeed.
 GAPS = {"/v1/games?": 1.0, "games.roblox.com/v2/": 1.5,  # v2 = creator game lists
-        "/servers/Public": 4.0, "groups.roblox.com": 2.0}  # both allow only a few calls a minute
-MIN_GAPS = {"/v1/games?": 0.5, "games.roblox.com/v2/": 1.0, "/servers/Public": 2.0, "groups.roblox.com": 1.0}
+        "/servers/Public": 4.0, "groups.roblox.com": 2.0,  # both allow only a few calls a minute
+        "games-autocomplete": 0.4}
+MIN_GAPS = {"/v1/games?": 0.5, "games.roblox.com/v2/": 1.0, "/servers/Public": 2.0, "groups.roblox.com": 1.0,
+            "games-autocomplete": 0.25}
 DEFAULT_GAP = 0.3
 
 _last_call = {}
@@ -25,6 +28,8 @@ stats = {"calls": 0, "retries": 0}
 
 
 def _gap_key(url):
+    if "groups.roblox.com/v2/" in url:  # the batch endpoint is not limited like /v1/groups/{id}
+        return "groups-v2"
     for key in GAPS:
         if key in url:
             return key
@@ -179,6 +184,42 @@ def thumbnails(universe_ids):
         if th:
             out.append({"universeId": d.get("universeId"), "url": th[0]["imageUrl"]})
     return out
+
+
+def autocomplete(prefix):
+    """Popular search terms Roblox suggests for a prefix, most popular first."""
+    url = f"https://apis.roblox.com/games-autocomplete/v1/get-suggestion/{urllib.parse.quote(prefix)}"
+    return [e["searchQuery"] for e in get_json(url, tries=3).get("entries") or [] if e.get("searchQuery")]
+
+
+def search(query):
+    """First page (about 40) of game search results: [{universeId, name, playerCount, up, down, sponsored, minAge}]."""
+    url = (f"https://apis.roblox.com/search-api/omni-search?searchQuery={urllib.parse.quote(query)}"
+           "&sessionId=market-tracker&pageType=all")
+    out = []
+    for grp in get_json(url, tries=3).get("searchResults") or []:
+        for c in grp.get("contents") or []:
+            if c.get("universeId"):
+                out.append({"universeId": c["universeId"], "name": c.get("name"), "playerCount": c.get("playerCount"),
+                            "up": c.get("totalUpVotes"), "down": c.get("totalDownVotes"),
+                            "sponsored": bool(c.get("isSponsored")), "minAge": c.get("minimumAge")})
+    return out
+
+
+def user_created(user_id):
+    return get_json(f"https://users.roblox.com/v1/users/{user_id}", tries=3).get("created")
+
+
+def groups_info(group_ids):
+    """Up to 100 groups: {id: created}."""
+    ids = ",".join(str(i) for i in group_ids)
+    return {d["id"]: d.get("created") for d in get_json(f"https://groups.roblox.com/v2/groups?groupIds={ids}", tries=3).get("data") or []}
+
+
+def media(universe_id):
+    """(images, videos) on the game's page."""
+    items = get_json(f"https://games.roblox.com/v2/games/{universe_id}/media", tries=3).get("data") or []
+    return sum(m.get("assetType") == "Image" for m in items), sum(m.get("assetType") != "Image" for m in items)
 
 
 def votes(universe_ids):

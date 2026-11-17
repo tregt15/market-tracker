@@ -6,6 +6,7 @@ hits, which title patterns are trending, how the best games monetize and hold pl
 and which hits came from small creators (the ones most realistic to compete with).
 """
 
+import glob
 import json
 import os
 import re
@@ -86,6 +87,98 @@ def subgenre_rows(games):
     return rows
 
 
+def tag_rows(games):
+    by = defaultdict(list)
+    for g in games:
+        for tg in g.get("tags") or ["(no tag)"]:
+            by[tg].append(g)
+    rows = []
+    for tg, gs in by.items():
+        scan = [g for g in gs if any(s.startswith("scan") for s in g["src"])]
+        rows.append({
+            "tag": tg, "games": len(gs),
+            "allAges": sum((g["minAge"] or 0) == 0 for g in gs),
+            "hitRate": round(100 * sum(g["pPeak"] >= HIT for g in scan) / len(scan), 1) if len(scan) >= 5 else None,
+            "hits": sum(g["pPeak"] >= HIT for g in gs),
+            "visitsPerDay": round(sum(demand(g) for g in gs)),
+            "medianVisitsPerDay": med([demand(g) for g in gs]),
+            "medianLike": med([g["likePct"] for g in gs]),
+            "medianFav1k": med([g["fav1k"] for g in gs]),
+            "top": max(gs, key=demand)["name"],
+        })
+    rows.sort(key=lambda r: -r["visitsPerDay"])
+    return rows
+
+
+def age_change_lines(games):
+    """How often a new game's age rating moves after we find it, and in which direction."""
+    from_16 = [g for g in games if (g.get("minAgeFound") or 0) >= 16]
+    dropped = [g for g in from_16 if g["minAge"] is not None and g["minAge"] < 16]
+    from_low = [g for g in games if g.get("minAgeFound") is not None and g["minAgeFound"] < 16]
+    raised = [g for g in from_low if (g["minAge"] or 0) >= 16]
+    lines = [f"- {len(from_16)} games were 16+ when found; {len(dropped)} have since dropped below 16 "
+             f"({100 * len(dropped) / max(len(from_16), 1):.0f}%)."]
+    if dropped:
+        days = []
+        for g in dropped:
+            first_low = next((a for a, b in g["ageChanges"] if b is not None and b < 16), None)
+            if first_low:
+                days.append((parse_day(first_low) - parse_day(g["created"])))
+        if days:
+            lines.append(f"- Median game age when it dropped below 16: {median(days):.0f} days. Examples: "
+                         + "; ".join(f"{clean(g['name'], 30)} ({fmt(g['pPeak'])} peak)" for g in
+                                     sorted(dropped, key=lambda g: -g["pPeak"])[:5]))
+    lines.append(f"- {len(from_low)} games were under 16 when found; {len(raised)} have since been raised to 16+.")
+    stuck = [g for g in from_16 if g not in dropped]
+    if from_16:
+        lines.append(f"- Games still at 16+ average {fmt(med([demand(g) for g in stuck]))} visits/day (median); "
+                     f"games that dropped below 16 average {fmt(med([demand(g) for g in dropped]))}.")
+    return lines
+
+
+def parse_day(s):
+    import datetime as dt
+    return dt.date.fromisoformat(s[:10]).toordinal()
+
+
+def search_lines(games, data_dir, t):
+    """New and popular search terms from the latest daily sweep, with who ranks for them."""
+    files = sorted(glob.glob(os.path.join(data_dir, "search_results", "*.jsonl")))
+    if not files:
+        return ["No search sweep yet.\n"]
+    rows = []
+    for path in files[-2:]:
+        with open(path, encoding="utf-8") as f:
+            rows += [json.loads(x) for x in f if x.strip()]
+    last = max(r["t"] for r in rows)
+    rows = [r for r in rows if r["t"] == last]
+    young = {g["id"]: g for g in games}
+
+    def describe(r):
+        res = r["r"]
+        top = res[0] if res else None
+        y = [x for x in res[:10] if x[0] in young]
+        spons = sum(x[4] for x in res)
+        return (clean(top[6] if top and len(top) > 6 else "?", 30), fmt(top[1] if top else None), len(y),
+                fmt(sum(x[1] or 0 for x in res[:10])), spons)
+    out = [f"From the sweep at {last}: Roblox's autocomplete for every 1-2 letter prefix gives the terms players search "
+           "for most. Young games in top 10 = results that are games tracked here (created in the last 30 days). "
+           "Players in top 10 = demand already served by the top results.", ""]
+    new = sorted([r for r in rows if r.get("new")], key=lambda r: -r["score"])
+    for title, items in (("New terms (not in earlier sweeps)", new[:30]),
+                         ("Most popular terms", sorted(rows, key=lambda r: -r["score"])[:30])):
+        out += [f"### {title}", ""]
+        if not items:
+            out.append("None yet (needs two daily sweeps).\n")
+            continue
+        out.append(table(items, [
+            ("Search term", lambda r: r["q"]), ("Popularity", lambda r: r["score"]),
+            ("Top result", lambda r: describe(r)[0]), ("Its players", lambda r: describe(r)[1]),
+            ("Young games in top 10", lambda r: describe(r)[2]), ("Players in top 10", lambda r: describe(r)[3]),
+            ("Sponsored results", lambda r: describe(r)[4])]))
+    return out
+
+
 def pattern_rows(games):
     by = defaultdict(list)
     for g in games:
@@ -138,11 +231,11 @@ def table(rows, cols):
     return head + body
 
 
-def write_brief(games, details, raw_games, site, t):
+def write_brief(games, details, raw_games, site, t, data_dir):
     sub = subgenre_rows(games)
     pats = pattern_rows(games)
     with open(os.path.join(site, "brief.json"), "w", encoding="utf-8") as f:
-        json.dump({"subgenres": sub, "patterns": pats, "hit": HIT, "bigHit": BIG_HIT}, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump({"subgenres": sub, "patterns": pats, "tags": tag_rows(games), "hit": HIT, "bigHit": BIG_HIT}, f, ensure_ascii=False, separators=(",", ":"))
 
     full = [g for g in games if g["tracked"] >= 6.8]
     top = sorted(games, key=demand, reverse=True)[:40]
@@ -179,6 +272,20 @@ def write_brief(games, details, raw_games, site, t):
                   f"{sum(g['pPeak'] >= 5 for g in sample)} later reached 5+ players online, "
                   f"{sum(g['pPeak'] >= HIT for g in sample)} reached {HIT}+. Median visits/day "
                   f"{fmt(med([demand(g) for g in sample]))}.\n")
+    md += ["## Age ratings over time", ""]
+    md += age_change_lines(games) + [""]
+    tags_ = tag_rows(games)
+    md += ["## Mechanic and theme tags (keywords in names and descriptions; a game can have several)", ""]
+    md.append(table([r for r in tags_ if r["games"] >= 3], [
+        ("Tag", lambda r: r["tag"]), ("Games", lambda r: r["games"]), ("All ages", lambda r: r["allAges"]),
+        ("Hit rate (scan)", lambda r: "–" if r["hitRate"] is None else f"{r['hitRate']}%"),
+        ("Hits", lambda r: r["hits"]), ("Visits/day", lambda r: fmt(r["visitsPerDay"])),
+        ("Median visits/day", lambda r: fmt(r["medianVisitsPerDay"])),
+        ("Median like %", lambda r: r["medianLike"] if r["medianLike"] is not None else "–"),
+        ("Median fav/1k", lambda r: r["medianFav1k"] if r["medianFav1k"] is not None else "–"),
+        ("Top game", lambda r: clean(r["top"], 35))]))
+    md += ["## Search demand", ""]
+    md += search_lines(games, data_dir, t)
     md += ["## Sub-genres (3+ games)", ""]
     md.append(table([r for r in sub if r["games"] >= 3][:40], [
         ("Sub-genre", lambda r: r["subgenre"]), ("Games", lambda r: r["games"]),

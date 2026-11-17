@@ -38,7 +38,10 @@ GAME_COLS = [
     ("url", lambda g, d: f"https://www.roblox.com/games/{g['place']}"),
     ("genre", lambda g, d: g["genre"]),
     ("subgenre", lambda g, d: g["sub"]),
+    ("tags", lambda g, d: ";".join(g["tags"])),
     ("min_age", lambda g, d: g["minAge"]),
+    ("min_age_when_found", lambda g, d: g["minAgeFound"]),
+    ("age_rating_changes", lambda g, d: ";".join(f"{a[:10]}:{b}" for a, b in g["ageChanges"])),
     ("maturity", lambda g, d: g["mat"]),
     ("max_players_per_server", lambda g, d: g["maxPlayers"]),
     ("created", lambda g, d: g["created"]),
@@ -61,6 +64,8 @@ GAME_COLS = [
     ("votes", lambda g, d: g["votes"]),
     ("favorites_per_1k_visits", lambda g, d: g["fav1k"]),
     ("session_minutes_est", lambda g, d: g["session"]),
+    ("returning_visit_share_badges", lambda g, d: d["ret"][0]),
+    ("welcome_badge", lambda g, d: d["ret"][1]),
     ("updates_while_tracked", lambda g, d: g["updates"]),
     ("passes_for_sale", lambda g, d: g["passes"]),
     ("pass_price_min", lambda g, d: d["priceMin"]),
@@ -75,6 +80,10 @@ GAME_COLS = [
     ("creator", lambda g, d: g["creator"]),
     ("creator_type", lambda g, d: d["creatorType"]),
     ("creator_id", lambda g, d: d["creatorId"]),
+    ("creator_account_created", lambda g, d: g["creatorCreated"]),
+    ("sponsored_seen_at", lambda g, d: g["sponsored"]),
+    ("page_images", lambda g, d: (g["media"] or [None, None])[0]),
+    ("page_videos", lambda g, d: (g["media"] or [None, None])[1]),
     ("creator_verified", lambda g, d: None if g["verified"] is None else int(bool(g["verified"]))),
     ("creator_other_games", lambda g, d: g["creatorGames"]),
     ("creator_best_other_visits", lambda g, d: g["creatorBest"]),
@@ -178,6 +187,27 @@ def write_export(site, games, details, raw_games, series, state, sub_rows, pat_r
         _write_csv(os.path.join(out, name), header, rows)
         files[name] = len(rows)
 
+    badge_rows, ret = [], {}  # ret: latest (returning visit share, welcome badge name) per game
+    times = {}
+    for r in read_logs("badges", since):
+        if r["id"] not in ids:
+            continue
+        rows = series.get(r["id"], [])
+        if r["id"] not in times:
+            times[r["id"]] = [parse(x["t"]).timestamp() for x in rows]
+        gained = visits_24h_before(rows, times[r["id"]], parse(r["t"]).timestamp())
+        meta = raw_games.get(str(r["id"]), {}).get("badges") or {}
+        # the badge most players earn is the welcome badge: its daily awards count first-time players
+        top = max(r["b"], key=lambda b: b[1] or 0)
+        if gained and gained >= 200 and top[2] is not None:
+            share = max(0.0, min(1.0, 1 - top[2] / gained))
+            ret[r["id"]] = (round(share, 3), (meta.get(str(top[0])) or [""])[0])
+        for bid, awarded, past_day in r["b"]:
+            m = meta.get(str(bid)) or ["", "", ""]
+            badge_rows.append([r["id"], r["t"], bid, m[0], " ".join(m[1].split()), m[2], awarded, past_day, r.get("v"), gained])
+    write("badges.csv", ["id", "time_utc", "badge_id", "badge_name", "badge_description", "badge_created", "awarded_total",
+                         "awarded_past_day", "game_visits_total", "game_visits_past_24h"], badge_rows)
+
     game_rows, day_rows, pass_rows, prod_rows, hist_rows, mon_rows, hourly = [], [], [], [], [], [], []
     for g in sorted(games, key=lambda g: -(g["vpd24"] if g["vpd24"] is not None else g["vpd"])):
         raw = raw_games.get(str(g["id"]), {})
@@ -187,7 +217,7 @@ def write_export(site, games, details, raw_games, series, state, sub_rows, pat_r
         firsts = [c["first"] for c in (raw.get("charts") or {}).values()]
         d.update(priceMin=prices[0] if prices else None, priceMax=prices[-1] if prices else None,
                  creatorType=raw.get("creator_type"), creatorId=raw.get("creator_id"), thumb=raw.get("thumb"),
-                 firstChart=min(firsts) if firsts else None,
+                 firstChart=min(firsts) if firsts else None, ret=ret.get(g["id"], (None, None)),
                  ageFound=round((parse(g["first"]) - created).total_seconds() / 86400, 1))
         game_rows.append([f(g, d) for _, f in GAME_COLS])
         rows = series.get(g["id"], [])
@@ -215,22 +245,6 @@ def write_export(site, games, details, raw_games, series, state, sub_rows, pat_r
                 chart_rows.append([r["id"], r["t"], sort_id, best, views, ";".join(r.get("c") or [])])
     write("charts.csv", ["id", "time_utc", "chart", "best_rank", "views_listing_it", "countries"], chart_rows)
 
-    badge_rows = []
-    times = {}
-    for r in read_logs("badges", since):
-        if r["id"] not in ids:
-            continue
-        rows = series.get(r["id"], [])
-        if r["id"] not in times:
-            times[r["id"]] = [parse(x["t"]).timestamp() for x in rows]
-        gained = visits_24h_before(rows, times[r["id"]], parse(r["t"]).timestamp())
-        meta = raw_games.get(str(r["id"]), {}).get("badges") or {}
-        for bid, awarded, past_day in r["b"]:
-            m = meta.get(str(bid)) or ["", "", ""]
-            badge_rows.append([r["id"], r["t"], bid, m[0], " ".join(m[1].split()), m[2], awarded, past_day, r.get("v"), gained])
-    write("badges.csv", ["id", "time_utc", "badge_id", "badge_name", "badge_description", "badge_created", "awarded_total",
-                         "awarded_past_day", "game_visits_total", "game_visits_past_24h"], badge_rows)
-
     write("servers.csv", ["id", "time_utc", "servers_listed", "more_servers_than_listed", "max_per_server", "players_listed",
                           "fill", "solo_share", "full_share", "ping_ms", "fps"],
           [[r["id"], r["t"], r["n"], int(r["more"]), r["max"], r["players"], r["fill"], r["solo"], r["full"], r["ping"], r["fps"]]
@@ -238,6 +252,28 @@ def write_export(site, games, details, raw_games, series, state, sub_rows, pat_r
     groups = {raw_games.get(str(i), {}).get("creator_id") for i in ids}
     write("groups.csv", ["group_id", "time_utc", "members"],
           [[r["group"], r["t"], r["m"]] for r in read_logs("groups", since) if r["group"] in groups])
+    terms = state.get("terms") or {}
+    latest = {}
+    for r in read_logs("search", t - dt.timedelta(days=1)):
+        for i, q in enumerate(r["q"]):
+            sc = (10 - min(i, 9)) * (11 if len(r["p"]) == 1 else 1)
+            day = r["t"][:10]
+            latest.setdefault(day, {}).setdefault(q, 0)
+            latest[day][q] += sc
+    last_day = max(latest) if latest else None
+    scores = latest.get(last_day, {})
+    write("search_terms.csv", ["term", "popularity_score", "first_seen", "last_seen"],
+          sorted([[q, scores.get(q), v[0], v[1]] for q, v in terms.items() if isinstance(v, list)],
+                 key=lambda r: -(r[1] or 0)))
+    tracked_created = {g["id"]: g["created"] for g in games}
+    srows = []
+    for r in read_logs("search_results", since):
+        for rank, x in enumerate(r["r"], 1):
+            uid, players, up, down, spons, min_age = x[:6]
+            srows.append([r["t"], r["q"], r.get("new"), r.get("score"), rank, uid, x[6] if len(x) > 6 else None,
+                          players, up, down, spons, min_age, tracked_created.get(uid)])
+    write("search_results.csv", ["time_utc", "query", "query_is_new", "query_popularity", "rank", "universe_id", "name", "players",
+                                 "likes", "dislikes", "sponsored", "min_age", "created_if_tracked"], srows)
     write("history.csv", ["id", "time_utc", "field", "new_value"], hist_rows)
     write("passes.csv", ["id", "game_name", "pass_name", "price_robux"], pass_rows)
     write("products.csv", ["id", "game_name", "product_name", "price_robux"], prod_rows)

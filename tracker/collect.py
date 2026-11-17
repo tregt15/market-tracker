@@ -67,7 +67,11 @@ GROUP_MIN_PEAK = 5
 MONETIZATION_RECHECK_DAYS = 7
 ART_HOURS = 12
 # servers and groups allow only ~4-8 calls a minute, so they cover the biggest games first, daily
-BUDGET = {"enrich": 300, "badges": 180, "servers": 150, "groups": 90, "art": 60}  # halved on full runs
+BUDGET = {"enrich": 300, "badges": 180, "servers": 150, "groups": 90, "art": 60, "ages": 90,
+          "search": 600}  # halved on full runs
+SEARCH_HOURS = 23           # search demand sweep (autocomplete for every 1-2 letter prefix) once a day
+SEARCH_QUERIES = (100, 60)  # then search results for up to this many new terms / most popular terms
+SEARCH_MIN_PLAYERS = 5      # young games found in search results with this many players get tracked
 
 DEFAULT_NAME = re.compile(
     r"(untitled|sem t[ií]tulo|sin t[ií]tulo|sans titre|ohne titel|senza titolo|"
@@ -220,6 +224,7 @@ def add_game(games, detail, source, t, chart=None):
             "status": "tracking",
         }
         g["min_age"], g["maturity"] = roblox.age_rating(detail["id"])
+        g["min_age_found"], g["age_t"] = g["min_age"], iso(t)
         log(f"  + {g['name']!r} ({source}) created {g['created'][:10]} visits {detail.get('visits')}")
     refresh_details(g, detail, t)
     if source not in g["sources"]:
@@ -243,11 +248,14 @@ def young(created, t):
 
 def collect_charts(games, t):
     seen = {}  # universeId -> list of (sortId, rank, country)
+    sponsored = set()
     for device, country in CHART_VIEWS:
         try:
             for sort_id, _name, entries in roblox.discovery_sorts(device, country):
                 for rank, e in enumerate(entries, 1):
                     seen.setdefault(e["universeId"], []).append((sort_id, rank, country))
+                    if e.get("isSponsored"):
+                        sponsored.add(e["universeId"])
         except Exception as e:  # one failing view should not stop the run
             log("  chart view failed", device, country, e)
     log(f"charts: {len(seen)} unique games")
@@ -276,8 +284,11 @@ def collect_charts(games, t):
             b[0] = min(b[0], rank)
             b[1] += 1
             note_chart(g, t, sort_id, rank)
-        rows.append({"t": iso(t), "id": uid, "r": per_sort,
-                     "c": sorted({c for _s, _r, c in hits if c != "all"})})
+        row = {"t": iso(t), "id": uid, "r": per_sort, "c": sorted({c for _s, _r, c in hits if c != "all"})}
+        if uid in sponsored:
+            row["s"] = 1
+            g["sponsored_seen"] = iso(t)
+        rows.append(row)
     append_jsonl("charts", t, rows)
     log(f"charts: positions logged for {len(rows)} tracked games")
 
@@ -424,6 +435,15 @@ def enrich(games, t):
         log_ = g.setdefault("mon_log", [])
         log_.append({"t": iso(t), "passes": len(g["passes"]), "passMed": _prices(g["passes"]),
                      "products": None if products is None else len(products), "productMed": _prices(products)})
+        try:
+            g["media"] = list(roblox.media(g["id"]))
+        except Exception:
+            pass
+        if "creator_created" not in g and g.get("creator_type") == "User":
+            try:
+                g["creator_created"] = roblox.user_created(g["creator_id"])
+            except Exception:
+                pass
         if "creator_games" not in g:
             others = [x for x in roblox.creator_games(g["creator_type"], g["creator_id"]) if x.get("id") != g["id"]]
             visits = sorted((x.get("placeVisits") or 0 for x in others), reverse=True)
@@ -433,6 +453,16 @@ def enrich(games, t):
                 "best_visits": visits[0] if visits else 0,
                 "best_name": max(others, key=lambda x: x.get("placeVisits") or 0)["name"] if others else None,
             }
+    # group creation dates come 100 at a time, so they are fetched up front
+    need = {g["creator_id"] for g in todo if g.get("creator_type") == "Group" and "creator_created" not in g}
+    for ch in roblox.chunks(need, 100):
+        try:
+            info = roblox.groups_info(ch)
+        except Exception:
+            continue
+        for g in todo:
+            if g.get("creator_type") == "Group" and g.get("creator_id") in info:
+                g["creator_created"] = info[g["creator_id"]]
     run_budgeted("enrich", todo, one)
 
 
@@ -525,6 +555,93 @@ def collect_art(games, t):
     run_budgeted("art", list(roblox.chunks(by_id)), one)
 
 
+def collect_ages(games, t):
+    """Recheck age ratings daily: new games often start at 16+ and drop once Roblox has more signal."""
+    todo = [g for g in games.values() if g["status"] == "tracking" and hours_since(g.get("age_t"), t) >= 23]
+    todo.sort(key=lambda g: (g.get("age_t") or "", -(g.get("peak") or 0)))
+
+    def one(g):
+        age, maturity = roblox.age_rating(g["id"])
+        g["age_t"] = iso(t)
+        if age is None:
+            return
+        g.setdefault("min_age_found", g.get("min_age"))
+        if g.get("min_age") is not None and age != g["min_age"]:
+            note_change(g, t, "min_age", age)
+            log(f"  age rating {g['min_age']} -> {age}: {g['name']!r}")
+        g["min_age"], g["maturity"] = age, maturity
+    run_budgeted("ages", todo, one)
+
+
+def collect_search(games, state, t):
+    """Once a day: what players search for (autocomplete for every 1-2 letter prefix), and who ranks for it.
+
+    New terms (not seen in earlier sweeps) and the most popular terms get a search, which shows the
+    games that rank, whether they are sponsored (ads), and young games we were not tracking yet."""
+    deadline = time.time() + BUDGET["search"] * (0.5 if FULL_RUN else 1)
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    prefixes = list(letters) + [a + b for a in letters for b in letters]
+    known = state.setdefault("terms", {})
+    baseline = not known
+    score, rows = {}, []
+    for p in prefixes:
+        if time.time() > deadline:
+            log(f"search: stopped after {len(rows)} of {len(prefixes)} prefixes (time budget)")
+            break
+        try:
+            terms = roblox.autocomplete(p)
+        except Exception as e:
+            log(f"  search {p!r}: {e}")
+            continue
+        rows.append({"t": iso(t), "p": p, "q": terms})
+        for i, q in enumerate(terms):
+            # rank in the one-letter list dominates (those are the most searched terms), then the two-letter list
+            score[q] = score.get(q, 0) + (10 - min(i, 9)) * (11 if len(p) == 1 else 1)
+    append_jsonl("search", t, rows)
+    new = [q for q in score if q not in known]
+    for q in score:  # [first seen, last seen]
+        known[q] = [known[q][0] if q in known else iso(t), iso(t)]
+    log(f"search: {len(score)} popular terms, {0 if baseline else len(new)} new since earlier sweeps")
+    queries = ([] if baseline else sorted(new, key=lambda q: -score[q])[:SEARCH_QUERIES[0]])
+    queries += [q for q in sorted(score, key=lambda q: -score[q]) if q not in queries][:SEARCH_QUERIES[1]]
+    results, found = [], {}
+    for q in queries:
+        if time.time() > deadline:
+            break
+        try:
+            res = roblox.search(q)
+        except Exception as e:
+            log(f"  search {q!r}: {e}")
+            continue
+        results.append({"t": iso(t), "q": q, "new": int(q in new and not baseline), "score": score[q],
+                        "r": [[x["universeId"], x["playerCount"], x["up"], x["down"], int(x["sponsored"]), x["minAge"],
+                               (x["name"] or "")[:60]] for x in res]})
+        for x in res:
+            g = games.get(str(x["universeId"]))
+            if g and x["sponsored"]:
+                g["sponsored_seen"] = iso(t)
+            if not g and (x["playerCount"] or 0) >= SEARCH_MIN_PLAYERS:
+                found[x["universeId"]] = q
+    append_jsonl("search_results", t, results)
+    # young games that rank in search but that we were not tracking yet
+    added = 0
+    created = {}
+    for ch in roblox.chunks(found, 100):
+        for u in roblox.universes(ch):
+            created[u["id"]] = u["created"]
+    young_ids = [i for i in found if young(created.get(i), t)]
+    for ch in roblox.chunks(young_ids):
+        for d in roblox.games(ch):
+            if d.get("id") in found:
+                add_game(games, d, "search", t)
+                added += 1
+    # forget terms not seen for 60 days so state.json stays small
+    for q in [q for q, v in known.items() if hours_since(v[1], t) > 24 * 60]:
+        del known[q]
+    state["search_t"] = iso(t)
+    log(f"search: {len(results)} searches, {added} young games added from search results")
+
+
 def archive(games, t):
     """Move finished games older than ARCHIVE_AFTER_DAYS into data/archive/games-YYYY-MM.json."""
     old = [k for k, g in games.items()
@@ -592,6 +709,9 @@ def main():
         step("servers", lambda: collect_servers(games, t))
         step("groups", lambda: collect_groups(games, state, t))
         step("art", lambda: collect_art(games, t))
+        step("ages", lambda: collect_ages(games, t))
+    if full and not sys.argv[1:] and hours_since(state.get("search_t"), t) >= SEARCH_HOURS or "search" in steps:
+        step("search", lambda: collect_search(games, state, t))
 
     state["runs"] = (state.get("runs", []) + [{
         "t": iso(t), "mode": "full" if full else "light", "seconds": round((now_utc() - t).total_seconds()),

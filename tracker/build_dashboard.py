@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tracker.collect import DATA, ROOT, TRACK_DAYS, DENSE_DAYS, load, parse, now_utc  # noqa: E402
 from tracker.brief import write_brief  # noqa: E402
 from tracker.export import write_export  # noqa: E402
+from tracker.tags import tags as game_tags  # noqa: E402
 
 KEEP_DAYS = 14    # games found in the last 2 weeks stay on the dashboard
 EXPORT_DAYS = 60  # games found in the last 2 months go into the brief and the download
@@ -109,6 +110,12 @@ def metrics(g, rows, t):
         "productMed": mid_price(products),
         "groupMembers": g.get("group_members"),
         "badges": None if "badges" not in g else len(g["badges"]),
+        "tags": game_tags(g.get("name"), g.get("description")),
+        "minAgeFound": g.get("min_age_found", g.get("min_age")),
+        "ageChanges": [[h[0], h[2]] for h in hist if h[1] == "min_age"],
+        "creatorCreated": (g.get("creator_created") or "")[:10] or None,
+        "media": g.get("media"),
+        "sponsored": g.get("sponsored_seen"),
         "nameChanges": sum(h[1] == "name" for h in hist),
         "iconChanges": sum(h[1] == "icon" for h in hist),
         "creatorGames": None if cg is None else cg["count"],
@@ -163,7 +170,7 @@ def main():
     os.makedirs(os.path.join(site, "series"))
     shutil.copy(os.path.join(ROOT, "docs", "index.html"), site)
     # the brief and the download cover every game of the last EXPORT_DAYS
-    sub, pats = write_brief(every, details, games, site, t)
+    sub, pats = write_brief(every, details, games, site, t, DATA)
     files = write_export(site, every, details, games, series, state, sub, pats, t, since)
     # full time series go to SHARDS small files, loaded only when a row is opened
     shards = {}

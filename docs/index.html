@@ -124,6 +124,7 @@ a.btn:hover { filter: brightness(1.08); }
   <div class="filters" role="group" aria-label="Filters">
     <label>Search<input type="search" id="q" placeholder="Name or creator"></label>
     <label>Genre<select id="genre"><option value="">All genres</option></select></label>
+    <label>Tag<select id="tag"><option value="">All tags</option></select></label>
     <label>Age rating<select id="age">
       <option value="">Any</option>
       <option value="0">All ages only</option>
@@ -135,6 +136,8 @@ a.btn:hover { filter: brightness(1.08); }
       <option value="">Charts or scan</option>
       <option value="charts">Roblox charts</option>
       <option value="scan">New-game scan</option>
+      <option value="search">Search results</option>
+      <option value="sample">Random sample</option>
     </select></label>
     <label>Max age when found (days)<input type="number" id="maxage" min="1" max="30" value="30"></label>
     <label>Min players now<input type="number" id="minp" min="0" value="0"></label>
@@ -149,7 +152,11 @@ a.btn:hover { filter: brightness(1.08); }
   </section>
 
   <section class="panel">
-    <h2>Sub-genres: demand vs crowding</h2>
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+      <h2 style="margin:0;">Demand vs crowding</h2>
+      <label class="sub" style="font-size:13px;">Group by <select id="subMode">
+        <option value="subgenres">Roblox sub-genre</option><option value="tags">Mechanic / theme tag</option></select></label>
+    </div>
     <div class="tablewrap" style="max-height: 420px; overflow-y: auto;">
       <table id="subTable" style="min-width: 900px;"></table>
     </div>
@@ -195,17 +202,19 @@ const COLS = [
 ];
 
 function filtered() {
-  const q = $("q").value.trim().toLowerCase(), genre = $("genre").value, age = $("age").value, src = $("src").value;
+  const q = $("q").value.trim().toLowerCase(), genre = $("genre").value, age = $("age").value, src = $("src").value, tag = $("tag").value;
   const maxAge = +$("maxage").value || 30, minP = +$("minp").value || 0, week = $("week").checked;
   return DATA.games.filter(g => {
     if (q && !(g.name || "").toLowerCase().includes(q) && !(g.creator || "").toLowerCase().includes(q)) return false;
     if (genre && g.genre !== genre) return false;
+    if (tag && !(g.tags || []).includes(tag)) return false;
     if (age !== "") {
       const a = g.minAge ?? 0;
       if (age === "16" ? a < 16 : a > +age) return false;
     }
     if (src === "charts" && !g.src.includes("charts")) return false;
     if (src === "scan" && !g.src.some(s => s.startsWith("scan"))) return false;
+    if ((src === "search" || src === "sample") && !g.src.includes(src)) return false;
     if (g.ageDays - g.tracked > maxAge) return false; // age when first found
     if (g.pNow < minP) return false;
     if (week && g.tracked < DATA.trackDays - 0.2) return false;
@@ -337,9 +346,11 @@ function detailRow(g) {
   const fact = (k, v) => { dl.append(el("dt", null, k)); const dd = el("dd"); if (v instanceof Node) dd.append(v); else dd.textContent = v; dl.append(dd); return dd; };
   const link = el("a", null, "Open on Roblox"); link.href = `https://www.roblox.com/games/${g.place}`; link.target = "_blank"; link.rel = "noopener";
   fact("Link", link);
-  fact("Creator", g.creator || "?");
+  fact("Creator", (g.creator || "?") + (g.creatorCreated ? ` (account from ${g.creatorCreated})` : ""));
   fact("Genre", g.genre + (g.sub ? " › " + g.sub : ""));
-  fact("Age rating", ageLabel(g.minAge) + (g.mat ? ` (${g.mat})` : ""));
+  fact("Age rating", ageLabel(g.minAge) + (g.mat ? ` (${g.mat})` : "")
+    + ((g.ageChanges || []).length ? `; was ${ageLabel(g.minAgeFound)} when found, changed ` + g.ageChanges.map(c => `${c[0].slice(0, 10)} to ${ageLabel(c[1])}`).join(", ") : ""));
+  if ((g.tags || []).length) fact("Tags", g.tags.join(", "));
   fact("Created", g.created);
   fact("First found", g.first.slice(0, 16).replace("T", " ") + " UTC");
   fact("Tracked", g.tracked.toFixed(1) + " days" + (g.status === "gone" ? " (now private or deleted)" : ""));
@@ -347,8 +358,10 @@ function detailRow(g) {
   fact("Likes", g.votes ? `${g.likePct ?? "–"}% of ${fmt(g.votes)} votes` : "no votes");
   fact("Charts", g.charts.length ? g.charts.map(c => `${c[0]} #${c[1]}`).join(", ") : "not on the charts");
   fact("Avg session", g.session == null ? "needs 12h of data" : `~${Math.round(g.session)} min`);
-  fact("Updates", `${g.updates} while tracked`);
-  const passFact = fact("Game passes", g.passes == null ? "not checked (small game)" : `${g.passes}` + (g.passMed ? `, median R$${g.passMed}` : ""));
+  fact("Updates", `${g.updates} while tracked` + (g.nameChanges || g.iconChanges ? `; ${g.nameChanges} title and ${g.iconChanges} icon changes` : ""));
+  if (g.sponsored) fact("Ads", `seen sponsored ${g.sponsored.slice(0, 10)}`);
+  const passFact = fact("Game passes", g.passes == null ? "not checked yet" : `${g.passes}` + (g.passMed ? `, median R$${g.passMed}` : ""));
+  if (g.products != null) fact("Dev products", `${g.products}` + (g.productMed ? `, median R$${g.productMed}` : ""));
   fact("Creator's games", g.creatorGames == null ? "not checked" : `${g.creatorGames} others, best ${fmt(g.creatorBest)} visits`);
   facts.append(dl);
   const desc = el("p", "muted"); desc.style.whiteSpace = "pre-line"; desc.style.fontSize = "12px";
@@ -424,17 +437,20 @@ function init(data) {
   DATA = data;
   const genres = [...new Set(data.games.map(g => g.genre))].sort();
   for (const g of genres) { const o = el("option", null, g); o.value = g; $("genre").append(o); }
+  const tagList = [...new Set(data.games.flatMap(g => g.tags || []))].sort();
+  for (const g of tagList) { const o = el("option", null, g); o.value = g; $("tag").append(o); }
   const upd = new Date(data.generated);
   $("subline").textContent = `Games created in the last 30 days, found on the Roblox charts or by scanning new uploads, then snapshotted every 1 to 3 hours for ${data.trackDays} days and daily up to ${data.trackDaysTotal || data.trackDays} days. Updated ${upd.toLocaleString()} · ${data.runs} runs so far.`;
-  for (const id of ["q", "genre", "age", "src", "maxage", "minp", "week"]) $(id).addEventListener("input", () => { shown = 100; render(); });
-  $("reset").addEventListener("click", () => { $("q").value = ""; $("genre").value = ""; $("age").value = ""; $("src").value = ""; $("maxage").value = 30; $("minp").value = 0; $("week").checked = false; shown = 100; render(); });
+  for (const id of ["q", "genre", "tag", "age", "src", "maxage", "minp", "week"]) $(id).addEventListener("input", () => { shown = 100; render(); });
+  $("reset").addEventListener("click", () => { $("q").value = ""; $("genre").value = ""; $("tag").value = ""; $("age").value = ""; $("src").value = ""; $("maxage").value = 30; $("minp").value = 0; $("week").checked = false; shown = 100; render(); });
   $("moreBtn").addEventListener("click", () => { shown += 100; renderTable(); });
   renderHead(); render();
   if (location.hash === "#open-first" && rows.length) { openId = rows[0].id; renderTable(); }
 }
 
+let subMode = "subgenres";
 const SUB_COLS = [
-  ["subgenre", "Sub-genre", r => r.subgenre, true],
+  ["subgenre", "Sub-genre", r => r.subgenre ?? r.tag, true],
   ["games", "Games", r => r.games],
   ["hitRate", "Hit rate", r => r.hitRate == null ? "–" : r.hitRate + "%"],
   ["hits", "Hits", r => r.hits],
@@ -443,14 +459,16 @@ const SUB_COLS = [
   ["perGame", "Per game", r => fmt(r.perGame)],
   ["medianSession", "Session", r => r.medianSession == null ? "–" : Math.round(r.medianSession) + "m"],
   ["medianLike", "Like %", r => r.medianLike == null ? "–" : r.medianLike + "%"],
-  ["allAgesShare", "All ages", r => r.allAgesShare + "%"],
+  ["allAgesShare", "All ages", r => r.allAgesShare != null ? r.allAgesShare + "%" : Math.round(100 * r.allAges / r.games) + "%"],
   ["top", "Top game", r => r.top, true],
 ];
-let subRows = [], subKey = "visitsPerDay", subAsc = false;
+let BRIEF = null, subRows = [], subKey = "visitsPerDay", subAsc = false;
 function renderSubs() {
   const t = $("subTable"); t.replaceChildren();
   const head = el("tr");
-  for (const [k, label, , left] of SUB_COLS) {
+  for (const [k, label0, , left] of SUB_COLS) {
+    if (subMode === "tags" && ["bigHits", "perGame", "medianSession"].includes(k)) continue;
+    const label = k === "subgenre" && subMode === "tags" ? "Tag" : label0;
     const th = el("th", (left ? "l " : "") + (k === subKey ? "sorted" + (subAsc ? " asc" : "") : ""), label);
     th.addEventListener("click", () => { if (subKey === k) subAsc = !subAsc; else { subKey = k; subAsc = left; } renderSubs(); });
     head.append(th);
@@ -464,13 +482,18 @@ function renderSubs() {
   });
   for (const r of rows) {
     const tr = el("tr");
-    for (const [, , f, left] of SUB_COLS) tr.append(el("td", left ? "l" : null, f(r)));
+    for (const [k, , f, left] of SUB_COLS) {
+      if (subMode === "tags" && ["bigHits", "perGame", "medianSession"].includes(k)) continue;
+      tr.append(el("td", left ? "l" : null, f(r)));
+    }
     body.append(tr);
   }
   t.append(body);
 }
 fetch("brief.json", { cache: "no-store" }).then(r => r.json()).then(b => {
+  BRIEF = b;
   subRows = b.subgenres;
+  $("subMode").addEventListener("change", e => { subMode = e.target.value; subRows = BRIEF[subMode] || []; renderSubs(); });
   $("subNote").firstChild.textContent = `Hit = peak ${b.hit}+ players online, big hit = ${b.bigHit}+. Hit rate counts only games found by the new-game scan, so it reflects the odds for a fresh launch. Per game = visits/day divided by games (high = demand not yet crowded). All tracked games, not filtered. `;
   renderSubs();
 }).catch(() => {});

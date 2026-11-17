@@ -53,6 +53,10 @@ How games were found:
 - **Random sample** (`found_by` contains `sample`): about 50 a day of 2-day-old public games that
   did *not* clear the bar, picked at random. Together with `scan_log.csv` (how many new games were
   checked and how many passed) this gives the base rate for an ordinary launch.
+- **Search** (`found_by` contains `search`): once a day we read Roblox's search autocomplete for
+  every 1-2 letter prefix (the terms players search for most), then search the new and the most
+  popular terms. Young games (created in the last 30 days) with 5+ players in those results are
+  tracked too.
 - Each tracked game is snapshotted for 30 days after it is first found (players online, total
   visits, favorites, likes, dislikes): hourly in the first 7 days if it has ever had 5+ players
   online, otherwise every 3 hours, then once a day from day 7 to day 30.
@@ -60,8 +64,8 @@ How games were found:
   badge award counts (every 6 hours in week 1, then daily, for games with 5+ players), public server
   fill and creator group member counts (daily, biggest games first; these endpoints are heavily
   rate-limited, so smaller games may be missing),
-  game passes and developer products (weekly), and every change of title, description, icon and
-  thumbnail.
+  game passes and developer products (weekly), the age rating (daily), and every change of title,
+  description, icon, thumbnail and age rating.
 
 ### Files
 
@@ -79,13 +83,19 @@ How games were found:
 | `passes.csv` | Every game pass for sale, with price in Robux. |
 | `products.csv` | Every developer product (consumable purchase) for sale, with price in Robux. |
 | `monetization.csv` | Pass and product counts and median prices at each weekly check, to see how monetization grows. |
+| `search_terms.csv` | Every popular search term from the daily autocomplete sweep: `popularity_score` (rank in the one-letter list counts most, then the two-letter list; max 120), and when we first and last saw it. Terms first seen after the first sweep are **new searches**: rising demand. |
+| `search_results.csv` | The first ~40 search results for new and popular terms: rank, game, players, likes, `sponsored` (an ad), age rating, and `created_if_tracked` (set when the result is a young game we track). Shows how much of a search's demand goes to old giants versus new games. |
 | `scan_log.csv` | Per scan run and age (2, 10, 20 days): universe ids checked, public games with a real name, how many had 2+ votes, how many cleared the bar (`added`) and how many went into the random sample. |
 | `subgenres.csv` | The sub-genre table from the brief. |
 | `patterns.csv` | Words and word pairs that appear in 3+ game names, with hits and visits. |
 
 ### `games.csv` columns
 
+- `tags`: mechanic and theme keywords found in the name and description (for example
+  `ragdoll / physics;fighting / pvp`). Rough, but better than the genre columns for grouping.
 - `min_age`: 0 means All ages; else 9, 13, 16 or 18. `maturity`: Roblox content label.
+  `min_age_when_found` and `age_rating_changes` (`date:new rating`) show ratings that moved,
+  for example a new game that starts at 16+ and drops once Roblox has enough signal.
 - `created`: when the game was created. `first_seen`: when we first found it.
   `age_when_found_days`: how old it was then. `days_tracked`: how long it has been snapshotted.
 - `charts_best_rank`: `chart:best rank` pairs, for example `top-trending:12;up-and-coming:3`.
@@ -104,6 +114,12 @@ How games were found:
 - `updates_while_tracked`: how many times the game was republished while tracked.
 - `passes_for_sale`, `pass_price_min/median/max`, `products_for_sale`, `product_price_median`:
   game passes and developer products (blank = not collected yet).
+- `returning_visit_share_badges`: share of the last 24 hours' visits that were *not* first-time
+  players, from the most-awarded badge (`welcome_badge`). See "Reading badges". Blank if the game
+  has no usable badge or under 200 visits a day.
+- `creator_account_created`: when the creator's account or group was made (new account = new
+  developer). `sponsored_seen_at`: last time we saw the game marked as sponsored (running ads) in
+  charts or search. `page_images`, `page_videos`: media on the game page.
 - `badges`: number of enabled badges. `name_changes`, `icon_changes`: how often the creator
   changed them while tracked. `group_members`: latest member count of the creator group.
 - `session_minutes_est` uses the first 7 days only (the hourly part).
@@ -153,6 +169,12 @@ A badge's `awarded_total` counts **unique players** who earned it; game visits c
   before and after.
 - **Solo or social:** server fill and solo share by sub-genre; how full servers are in the hits.
 - **Community:** did group members grow before players did?
+- **Search demand vs supply:** which new or popular search terms have lots of searching but weak
+  results (few players in the top 10, or no young game ranking)? Those are openings. Which terms
+  match the mechanic tags with high hit rates?
+- **Age rating timing:** how long do new games stay at 16+, and how many drop below 16? This was
+  our last game's biggest problem, so tell us what the games that dropped had in common.
+- **Ads:** do sponsored games grow differently from the rest?
 
 ## How to work
 
