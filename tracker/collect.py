@@ -595,27 +595,36 @@ def collect_search(games, state, t):
     prefixes = list(letters) + [p for p in pairs if vowels & set(p)] + [p for p in pairs if not vowels & set(p)]
     known = state.setdefault("terms", {})
     baseline = not state.get("search_complete")  # "new" terms need one complete earlier sweep to compare with
-    score, rows = {}, []
-    for p in prefixes:
+    # a sweep that runs out of time saves its place and continues in the next hourly run
+    sweep = state.get("sweep") or {"started": iso(t), "i": 0, "score": {}, "failed": 0}
+    score, rows = sweep["score"], []
+    while sweep["i"] < len(prefixes):
         if time.time() > deadline:
-            log(f"search: stopped after {len(rows)} of {len(prefixes)} prefixes (time budget)")
             break
+        p = prefixes[sweep["i"]]
+        sweep["i"] += 1
         try:
             terms = roblox.autocomplete(p)
         except Exception as e:
             log(f"  search {p!r}: {e}")
+            sweep["failed"] += 1
             continue
         rows.append({"t": iso(t), "p": p, "q": terms})
         for i, q in enumerate(terms):
             # rank in the one-letter list dominates (those are the most searched terms), then the two-letter list
             score[q] = score.get(q, 0) + (10 - min(i, 9)) * (11 if len(p) == 1 else 1)
     append_jsonl("search", t, rows)
-    complete = len(rows) >= 0.95 * len(prefixes)
+    if sweep["i"] < len(prefixes):
+        state["sweep"] = sweep
+        log(f"search: sweep at prefix {sweep['i']} of {len(prefixes)}, continuing next run")
+        return
+    state.pop("sweep", None)
+    complete = sweep["failed"] <= 0.05 * len(prefixes)
     new = [] if baseline else [q for q in score if q not in known]
     for q in score:  # [first seen, last seen]
         known[q] = [known[q][0] if q in known else iso(t), iso(t)]
-    log(f"search: {len(score)} popular terms, {len(new)} new since earlier sweeps"
-        + ("" if complete else " (partial sweep)"))
+    log(f"search: sweep since {sweep['started']} done, {len(score)} popular terms, {len(new)} new since earlier sweeps"
+        + ("" if complete else f" ({sweep['failed']} prefixes failed)"))
     queries = ([] if baseline else sorted(new, key=lambda q: -score[q])[:SEARCH_QUERIES[0]])
     queries += [q for q in sorted(score, key=lambda q: -score[q]) if q not in queries][:SEARCH_QUERIES[1]]
     results, found = [], {}
@@ -653,9 +662,8 @@ def collect_search(games, state, t):
     # forget terms not seen for 60 days so state.json stays small
     for q in [q for q, v in known.items() if hours_since(v[1], t) > 24 * 60]:
         del known[q]
-    if complete:  # a partial sweep is retried next hour
-        state["search_t"] = iso(t)
-        state["search_complete"] = True
+    state["search_t"] = iso(t)  # a finished sweep, even with a few failed prefixes, counts for the day
+    state["search_complete"] = bool(complete or state.get("search_complete"))
     log(f"search: {len(results)} searches, {added} young games added from search results")
 
 
@@ -737,7 +745,8 @@ def main():
         save("games.json", games)
     # the daily search sweep runs in a light hour (full runs are already long), after the extras because
     # it can add games, which the parallel extras must not see mid-run
-    search_due = hours_since(state.get("search_t"), t) >= SEARCH_HOURS or not state.get("search_complete")
+    search_due = (hours_since(state.get("search_t"), t) >= SEARCH_HOURS or "sweep" in state
+                  or "search_complete" not in state)  # never finished a sweep yet
     if (not full and not sys.argv[1:] and search_due) or "search" in steps:
         step("search", lambda: collect_search(games, state, t))
 
