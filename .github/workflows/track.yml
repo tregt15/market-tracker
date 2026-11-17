@@ -2,7 +2,8 @@ name: Update data
 
 on:
   schedule:
-    # Hourly. GitHub often delays or drops scheduled runs, so there is a second trigger each hour;
+    # Each run starts the next one about an hour after it began (last step below). GitHub delays
+    # or drops many scheduled runs, so these crons are only a backup that restarts the chain.
     # collect.py works out what is due, so an extra run only does work that is due.
     - cron: "17 * * * *"
     - cron: "47 * * * *"
@@ -13,6 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: write   # to start the next run
   contents: write
   pages: write
   id-token: write
@@ -20,10 +22,13 @@ permissions:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     environment:
       name: github-pages
     steps:
+      - name: Note start time
+        run: echo "RUN_START=$(date +%s)" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -62,3 +67,14 @@ jobs:
 
       - uses: actions/deploy-pages@v4
         if: ${{ !cancelled() }}
+
+      # Keep the hourly chain going: wait until about an hour after this run started, then start
+      # the next one. (Only one run can wait in the queue, so this never builds up duplicates.)
+      - name: Start the next run in an hour
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          wait=$(( 3540 - ($(date +%s) - RUN_START) ))
+          if [ "$wait" -gt 0 ]; then sleep "$wait"; fi
+          gh workflow run track.yml --repo "$GITHUB_REPOSITORY" --ref main
