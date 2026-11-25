@@ -196,3 +196,6 @@
 {"t":"2026-11-25T00:13:50Z","pass":"scan-2d","from":10778552765,"to":10778579443,"ids":26678,"public_named":3100,"not_yet_tracked":3099,"voted":265,"added":50,"sampled":6}
 {"t":"2026-11-25T00:13:50Z","pass":"scan-10d","from":10776722320,"to":10776759375,"ids":37055,"public_named":6393,"not_yet_tracked":6334,"voted":601,"added":50,"sampled":0}
 {"t":"2026-11-25T00:13:50Z","pass":"scan-20d","from":10774717315,"to":10774736060,"ids":18745,"public_named":2325,"not_yet_tracked":2245,"voted":486,"added":21,"sampled":0}
+{"t":"2026-11-25T03:11:17Z","pass":"scan-2d","from":10778579443,"to":10778602323,"ids":22880,"public_named":2469,"not_yet_tracked":2469,"voted":222,"added":50,"sampled":6}
+{"t":"2026-11-25T03:11:17Z","pass":"scan-10d","from":10776759375,"to":10776792021,"ids":32646,"public_named":5517,"not_yet_tracked":5457,"voted":476,"added":54,"sampled":0}
+{"t":"2026-11-25T03:11:17Z","pass":"scan-20d","from":10774736060,"to":10774752225,"ids":16165,"public_named":1870,"not_yet_tracked":1771,"voted":356,"added":12,"sampled":0}
